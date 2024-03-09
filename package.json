@@ -1,0 +1,17 @@
+{
+  "name": "ts_vfs_playground",
+  "version": "1.0.0",
+  "description": "some package",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "build": "node ./node_modules/typescript/lib/tsc.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/node": "^20.11.25",
+    "@typescript/vfs": "^1.5.0",
+    "typescript": "^5.4.2"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "lib": ["es2018", "dom"],
+    "target": "es6",
+    "module": "commonjs",
+    "types": ["node"],
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "sourceMap": true,
+    "skipLibCheck": true
+  }
+}

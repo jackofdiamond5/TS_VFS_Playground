@@ -1,0 +1,5 @@
+# base and sub-package installs
+**/node_modules
+
+# compiled files
+*.js
