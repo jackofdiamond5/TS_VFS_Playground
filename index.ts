@@ -7,14 +7,8 @@ import {
   createDefaultMapFromNodeModules,
   createFSBackedSystem,
   createSystem,
-  createVirtualCompilerHost,
   createVirtualTypeScriptEnvironment,
 } from "@typescript/vfs";
-
-export interface ITypeScriptVFSHost {
-  compilerHost: ts.CompilerHost;
-  updateFile: (sourceFile: ts.SourceFile) => boolean;
-}
 
 const DOT_TOKEN = ".";
 
@@ -29,7 +23,7 @@ export class TypeScriptVFS {
     }
   }
 
-  private _environment!: VirtualTypeScriptEnvironment;
+  private _environment: VirtualTypeScriptEnvironment | undefined;
   private get environment(): VirtualTypeScriptEnvironment {
     if (!this._environment) {
       this._environment = this.createEnvironment();
@@ -47,64 +41,74 @@ export class TypeScriptVFS {
     lib: ["es2018", "dom"],
   };
 
-  private _fsMap!: Map<string, string>;
+  private _fsMap: Map<string, string> | undefined;
   public get fsMap() {
     if (!this._fsMap) {
       this._fsMap = this.createDefaultMap();
     }
-
     return this._fsMap;
+  }
+
+  private _watchProgram: ts.WatchOfFilesAndCompilerOptions<ts.SemanticDiagnosticsBuilderProgram> | undefined;
+  private get watchProgram(): ts.WatchOfFilesAndCompilerOptions<ts.SemanticDiagnosticsBuilderProgram> {
+    if (!this._watchProgram) {
+      this._watchProgram = ts.createWatchProgram(this.host);
+    }
+    return this._watchProgram;
   }
 
   private _program!: ts.Program;
   public get program() {
     if (!this._program) {
-      this._program = ts.createProgram({
-        rootNames: [...this.fsMap.keys()],
-        options: this.getCompilerOptions(),
-        host: this.host.compilerHost,
-      });
-      this._program.emit();
+      this._program = this.watchProgram.getProgram().getProgram();
     }
-
     return this._program;
   }
+  private set program(program: ts.Program) {
+    this._program = program;
+  }
 
-  private _host!: ITypeScriptVFSHost;
-  public get host(): ITypeScriptVFSHost {
+  private _host: ts.WatchCompilerHostOfFilesAndCompilerOptions<ts.SemanticDiagnosticsBuilderProgram> | undefined;
+  public get host(): ts.WatchCompilerHostOfFilesAndCompilerOptions<ts.SemanticDiagnosticsBuilderProgram> {
     if (!this._host) {
-      this._host = createVirtualCompilerHost(
-        this.environment.sys,
+      this._host = ts.createWatchCompilerHost(
+        [...this.rootFiles, ...this.fsMap.keys()],
         this.getCompilerOptions(),
-        ts
+        this.environment.sys
       );
     }
     return this._host;
   }
 
   public createFile(name: string, content: string): void {
-    this.environment.createFile(path.posix.join(this.root, name), content);
+    const fullName = path.posix.join(this.root, name);
+    this.fsMap.set(fullName, content);
+    this.environment.createFile(fullName, content);
+    this.updateProgramSources([...this.fsMap.keys()]);
   }
 
   public fileExists(name: string): boolean {
-    return this.host.compilerHost.fileExists(path.posix.join(this.root, name));
+    return this.host.fileExists(path.posix.join(this.root, name));
   }
 
   public readFile(name: string): string | undefined {
-    return this.host.compilerHost.readFile(path.posix.join(this.root, name));
+    return this.host.readFile(path.posix.join(this.root, name));
   }
 
   public deleteFile(name: string): void {
-    this.environment.sys.deleteFile!(path.posix.join(this.root, name));
+    const fullName = path.posix.join(this.root, name);
+    this.environment.sys.deleteFile!(fullName);
+    this.updateProgramSources([...this.fsMap.keys()]);
   }
 
   public directoryExists(name: string): boolean {
-    return this.host.compilerHost.directoryExists!(
+    return this.host.directoryExists!(
       path.posix.join(this.root, name)
     );
   }
 
-  public readFilesFromDirectory(directory: string): void {
+  private readFilesFromDirectory(directory: string): void {
+    if (!fs.statSync(directory).isDirectory()) return;
     const files = fs.readdirSync(directory);
     for (const file of files) {
       const filePath = path.posix.join(directory, file);
@@ -116,17 +120,29 @@ export class TypeScriptVFS {
     }
   }
 
+  private updateProgramSources(fileNames: string[]) {
+    this.watchProgram.updateRootFileNames(fileNames);
+    this.program = this.watchProgram.getProgram().getProgram();
+  }
+
   private createEnvironment(): VirtualTypeScriptEnvironment {
     const targetSystem =
       fs.existsSync(this.root) && fs.statSync(this.root).isDirectory()
         ? createFSBackedSystem(this.fsMap, this.root, ts)
         : createSystem(this.fsMap);
-    return createVirtualTypeScriptEnvironment(
+    const env = createVirtualTypeScriptEnvironment(
       targetSystem,
       [...this.rootFiles],
       ts,
       this.getCompilerOptions()
     );
+    env.sys.write = (_s) => { }; // maybe include logging?
+    env.sys.getExecutingFilePath = () => this.root;
+    env.sys.createDirectory = (_path) => { };
+    env.sys.deleteFile = (name) => {
+      this.fsMap.delete(name);
+    };
+    return env;
   }
 
   private createDefaultMap(): Map<string, string> {
@@ -144,8 +160,12 @@ export class TypeScriptVFS {
   }
 }
 
-const vfs = new TypeScriptVFS(
-  "../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project"
-);
-const sourceFiles = vfs.program.getSourceFiles();
-const test = 5;
+const root =
+  "../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project";
+const vfs = new TypeScriptVFS(root);
+const sourceFiles = vfs.program.getSourceFiles().filter((sf) => sf.fileName.includes(root));
+vfs.createFile("testing.ts", "const test = 5;");
+const a = 5;
+vfs.deleteFile("testing.ts");
+const test = vfs.directoryExists("src");
+const b = 6;
