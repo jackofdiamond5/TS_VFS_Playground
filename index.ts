@@ -15,30 +15,57 @@ const DOT_TOKEN = ".";
 const SUPPORTED_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'];
 
 export class VirtualDirectory {
-  public subdirectories: Map<string, VirtualDirectory>;
-  public files: Map<string, VirtualFile>;
+  public readonly subDirs: Map<string, VirtualDirectory>;
+  public readonly files: Map<string, VirtualFile>;
   public path: string = '';
 
   constructor(public name: string, parentPath: string = '') {
-    this.subdirectories = new Map();
+    this.subDirs = new Map();
     this.files = new Map();
     this.path = path.posix.join(parentPath, name);
   }
 
-  public findDirectory(searchPath: string): VirtualDirectory | undefined {
+  public findSubDirectory(searchPath: string): VirtualDirectory | undefined {
     const normalizedSearchPath = path.posix.normalize(searchPath);
     const parts = normalizedSearchPath.split('/').filter(p => p.length);
     let currentDir: VirtualDirectory | undefined = this;
 
     for (const part of parts) {
-      if (currentDir?.subdirectories.has(part)) {
-        currentDir = currentDir.subdirectories.get(part);
+      if (currentDir?.subDirs.has(part)) {
+        currentDir = currentDir.subDirs.get(part);
       } else {
         return undefined;
       }
     }
 
     return currentDir;
+  }
+
+  public addSubDirectory(path: string): VirtualDirectory {
+    const parts = path.split('/').filter(p => p.length);
+    let currentDir: VirtualDirectory = this;
+    parts.forEach(part => {
+      if (!currentDir.subDirs.has(part)) {
+        const newDir = new VirtualDirectory(part, currentDir.path + '/');
+        currentDir.subDirs.set(part, newDir);
+        currentDir = newDir;
+      } else {
+        currentDir = currentDir.subDirs.get(part)!;
+      }
+    });
+
+    return currentDir;
+  }
+
+  public removeSubDirectory(path: string): boolean {
+    const parts = path.split('/').filter(p => p.length);
+    let currentDir: VirtualDirectory | undefined = this;
+    for (const part of parts) {
+      currentDir = currentDir.subDirs.get(part);
+      if (!currentDir) return false;
+    }
+
+    return currentDir.subDirs.delete(parts.pop()!);
   }
 
   public findFiles(fileName: string): VirtualFile[] {
@@ -48,7 +75,7 @@ export class VirtualDirectory {
       foundFiles.push(this.files.get(fileName)!);
     }
 
-    this.subdirectories.forEach(subdir => {
+    this.subDirs.forEach(subdir => {
       foundFiles = foundFiles.concat(subdir.findFiles(fileName));
     });
 
@@ -60,7 +87,7 @@ export class VirtualDirectory {
     const parts = normalizedSearchPath.split('/').filter(p => p.length);
     const fileName = parts.pop();
 
-    const containingDir = this.findDirectory(parts.join('/'));
+    const containingDir = this.findSubDirectory(parts.join('/'));
     if (fileName && containingDir) {
       return containingDir.files.get(fileName) || null;
     }
@@ -68,26 +95,10 @@ export class VirtualDirectory {
     return null;
   }
 
-  public addDirectory(path: string): VirtualDirectory {
-    const parts = path.split('/').filter(p => p.length);
-    let currentDir: VirtualDirectory = this;
-    parts.forEach(part => {
-      if (!currentDir.subdirectories.has(part)) {
-        const newDir = new VirtualDirectory(part, currentDir.path + '/');
-        currentDir.subdirectories.set(part, newDir);
-        currentDir = newDir;
-      } else {
-        currentDir = currentDir.subdirectories.get(part)!;
-      }
-    });
-
-    return currentDir;
-  }
-
   public addFile(path: string, content: string): VirtualFile {
     const parts = path.split('/');
     const fileName = parts.pop();
-    const directory = this.addDirectory(parts.join('/'));
+    const directory = this.addSubDirectory(parts.join('/'));
 
     if (fileName) {
       const newFile = new VirtualFile(fileName, content, directory.path + '/');
@@ -98,22 +109,11 @@ export class VirtualDirectory {
     }
   }
 
-  public removeDirectory(path: string): boolean {
-    const parts = path.split('/').filter(p => p.length);
-    let currentDir: VirtualDirectory | undefined = this;
-    for (const part of parts) {
-      currentDir = currentDir.subdirectories.get(part);
-      if (!currentDir) return false;
-    }
-
-    return currentDir.subdirectories.delete(parts.pop()!);
-  }
-
   public removeFile(searchPath: string): boolean {
     const normalizedSearchPath = path.posix.normalize(searchPath);
     const parts = normalizedSearchPath.split('/').filter(p => p.length);
     const fileName = parts.pop();
-    const containingDir = this.findDirectory(parts.join('/'));
+    const containingDir = this.findSubDirectory(parts.join('/'));
     if (fileName && containingDir) {
       return containingDir.files.delete(fileName);
     }
@@ -148,17 +148,17 @@ export class VirtualFile {
 }
 
 export class TypeScriptVFS {
-  constructor(public root = DOT_TOKEN, public compilerOptions: CompilerOptions = {}) { }
+  constructor(public root = DOT_TOKEN, private compilerOptions: CompilerOptions = {}) { }
 
-  public _rootDirectory: VirtualDirectory | undefined;
-  public get rootDirectory(): VirtualDirectory {
-    if (!this._rootDirectory) {
-      this._rootDirectory = this.loadPhysicalDirectoryToVirtual(
+  private _rootDir: VirtualDirectory | undefined;
+  public get rootDir(): VirtualDirectory {
+    if (!this._rootDir) {
+      this._rootDir = this.loadPhysicalDirectoryToVirtual(
         this.root,
         new VirtualDirectory(this.root, '/')
       );
     }
-    return this._rootDirectory;
+    return this._rootDir;
   }
 
   private _environment: VirtualTypeScriptEnvironment | undefined;
@@ -180,7 +180,7 @@ export class TypeScriptVFS {
   };
 
   private _fsMap: Map<string, string> | undefined;
-  public get fsMap() {
+  private get fsMap() {
     if (!this._fsMap) {
       this._fsMap = this.createDefaultMap();
     }
@@ -219,19 +219,19 @@ export class TypeScriptVFS {
   }
 
   public createFile(name: string, content: string): VirtualFile {
-    return this.rootDirectory.addFile(name, content);
+    return this.rootDir.addFile(name, content);
   }
 
   public fileExists(name: string): boolean {
-    return this.rootDirectory.findFile(name) !== null;
+    return this.rootDir.findFile(name) !== null;
   }
 
-  public readFile(name: string): string | undefined {
-    return this.rootDirectory.findFile(name)?.content;
+  public read(fileName: string): string | undefined {
+    return this.rootDir.findFile(fileName)?.content;
   }
 
-  public updateFile(name: string, content: string): VirtualFile | null {
-    const file = this.rootDirectory.findFile(name);
+  public overwrite(fileName: string, content: string): VirtualFile | null {
+    const file = this.rootDir.findFile(fileName);
     if (file) {
       file.updateContent(content);
     }
@@ -240,15 +240,15 @@ export class TypeScriptVFS {
   }
 
   public findFiles(fileName: string): VirtualFile[] {
-    return this.rootDirectory?.findFiles(fileName) || [];
+    return this.rootDir?.findFiles(fileName) || [];
   }
 
   public deleteFile(name: string): boolean {
-    return this.rootDirectory.removeFile(name);
+    return this.rootDir.removeFile(name);
   }
 
   public directoryExists(name: string): boolean {
-    return this.rootDirectory.findDirectory(name) !== undefined;
+    return this.rootDir.findSubDirectory(name) !== undefined;
   }
 
   public getSourceFiles(): readonly ts.SourceFile[] {
@@ -258,10 +258,18 @@ export class TypeScriptVFS {
       .filter((sf) => sf.fileName.includes(path.posix.resolve(this.root)));
   }
 
-  public flush(): void {
-    this._fsMap = this.convertToFsMap(this.rootDirectory);
+  public clear(): void {
+    this._rootDir = this.loadPhysicalDirectoryToVirtual(
+      this.root,
+      new VirtualDirectory(this.root, '/')
+    );
+    this.flush();
+  }
+
+  private flush(): void {
+    this._fsMap = this.convertToFsMap(this.rootDir);
     this.updateProgramSources([...this.fsMap.keys()]);
-    this.updateSourceFiles(this.rootDirectory, this.program);
+    this.updateSourceFiles(this.rootDir, this.program);
   }
 
   private updateSourceFiles(dir: VirtualDirectory, program: ts.Program) {
@@ -269,13 +277,13 @@ export class TypeScriptVFS {
       file.updateSourceFile(program);
     });
 
-    dir.subdirectories.forEach((subdir) => {
+    dir.subDirs.forEach((subdir) => {
       this.updateSourceFiles(subdir, program);
     });
   }
 
   private convertToFsMap(dir: VirtualDirectory, fsMap: Map<string, string> = new Map()): Map<string, string> {
-    dir.subdirectories.forEach((subdir) => {
+    dir.subDirs.forEach((subdir) => {
       this.convertToFsMap(subdir, fsMap);
     });
 
@@ -293,7 +301,7 @@ export class TypeScriptVFS {
     for (const entry of entries) {
       const entryPath = path.posix.join(physicalDirPath, entry.name);
       if (entry.isDirectory()) {
-        const newVirtualDir = virtualDir.addDirectory(entry.name);
+        const newVirtualDir = virtualDir.addSubDirectory(entry.name);
         this.loadPhysicalDirectoryToVirtual(entryPath, newVirtualDir);
       } else if (entry.isFile()) {
         const fileContent = fs.readFileSync(entryPath, 'utf8');
