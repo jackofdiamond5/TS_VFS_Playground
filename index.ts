@@ -150,6 +150,14 @@ export class VirtualFile {
 export class TypeScriptVFS {
   constructor(public root = DOT_TOKEN, private compilerOptions: CompilerOptions = {}) { }
 
+  private readonly _defaultCompilerOptions: CompilerOptions = {
+    baseUrl: this.root,
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.Latest,
+    esModuleInterop: true,
+    lib: ["es2018", "dom"]
+  };
+
   private _rootDir: VirtualDirectory | undefined;
   public get rootDir(): VirtualDirectory {
     if (!this._rootDir) {
@@ -168,16 +176,6 @@ export class TypeScriptVFS {
     }
     return this._environment;
   }
-
-  private readonly _defaultCompilerOptions: CompilerOptions = {
-    baseUrl: this.root,
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2016,
-    strict: true,
-    esModuleInterop: true,
-    forceConsistentCasingInFileNames: true,
-    lib: ["es2018", "dom"],
-  };
 
   private _fsMap: Map<string, string> | undefined;
   private get fsMap() {
@@ -340,7 +338,7 @@ export class TypeScriptVFS {
 
   private createDefaultMap(): Map<string, string> {
     return createDefaultMapFromNodeModules({
-      target: ts.ScriptTarget.ES2016,
+      target: ts.ScriptTarget.Latest,
     });
   }
 
