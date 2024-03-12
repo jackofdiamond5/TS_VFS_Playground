@@ -11,7 +11,7 @@ import {
 } from "@typescript/vfs";
 
 const DOT_TOKEN = ".";
-
+const FORWARD_SLASH_TOKEN = "/";
 const SUPPORTED_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'];
 
 export class VirtualDirectory {
@@ -23,11 +23,12 @@ export class VirtualDirectory {
     this.subDirs = new Map();
     this.files = new Map();
     this.path = path.posix.join(parentPath, name);
+    this.name = path.posix.normalize(name).substring(name.lastIndexOf(FORWARD_SLASH_TOKEN) + 1);
   }
 
   public findSubDirectory(searchPath: string): VirtualDirectory | undefined {
     const normalizedSearchPath = path.posix.normalize(searchPath);
-    const parts = normalizedSearchPath.split('/').filter(p => p.length);
+    const parts = normalizedSearchPath.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
     let currentDir: VirtualDirectory | undefined = this;
 
     for (const part of parts) {
@@ -42,11 +43,11 @@ export class VirtualDirectory {
   }
 
   public addSubDirectory(path: string): VirtualDirectory {
-    const parts = path.split('/').filter(p => p.length);
+    const parts = path.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
     let currentDir: VirtualDirectory = this;
     parts.forEach(part => {
       if (!currentDir.subDirs.has(part)) {
-        const newDir = new VirtualDirectory(part, currentDir.path + '/');
+        const newDir = new VirtualDirectory(part, currentDir.path + FORWARD_SLASH_TOKEN);
         currentDir.subDirs.set(part, newDir);
         currentDir = newDir;
       } else {
@@ -58,7 +59,7 @@ export class VirtualDirectory {
   }
 
   public removeSubDirectory(path: string): boolean {
-    const parts = path.split('/').filter(p => p.length);
+    const parts = path.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
     let currentDir: VirtualDirectory | undefined = this;
     for (const part of parts) {
       currentDir = currentDir.subDirs.get(part);
@@ -84,10 +85,10 @@ export class VirtualDirectory {
 
   public findFile(searchPath: string): VirtualFile | null {
     const normalizedSearchPath = path.posix.normalize(searchPath);
-    const parts = normalizedSearchPath.split('/').filter(p => p.length);
+    const parts = normalizedSearchPath.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
     const fileName = parts.pop();
 
-    const containingDir = this.findSubDirectory(parts.join('/'));
+    const containingDir = this.findSubDirectory(parts.join(FORWARD_SLASH_TOKEN));
     if (fileName && containingDir) {
       return containingDir.files.get(fileName) || null;
     }
@@ -96,12 +97,12 @@ export class VirtualDirectory {
   }
 
   public addFile(path: string, content: string): VirtualFile {
-    const parts = path.split('/');
+    const parts = path.split(FORWARD_SLASH_TOKEN);
     const fileName = parts.pop();
-    const directory = this.addSubDirectory(parts.join('/'));
+    const directory = this.addSubDirectory(parts.join(FORWARD_SLASH_TOKEN));
 
     if (fileName) {
-      const newFile = new VirtualFile(fileName, content, directory.path + '/');
+      const newFile = new VirtualFile(fileName, content, directory.path + FORWARD_SLASH_TOKEN);
       directory.files.set(fileName, newFile);
       return newFile;
     } else {
@@ -111,9 +112,9 @@ export class VirtualDirectory {
 
   public removeFile(searchPath: string): boolean {
     const normalizedSearchPath = path.posix.normalize(searchPath);
-    const parts = normalizedSearchPath.split('/').filter(p => p.length);
+    const parts = normalizedSearchPath.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
     const fileName = parts.pop();
-    const containingDir = this.findSubDirectory(parts.join('/'));
+    const containingDir = this.findSubDirectory(parts.join(FORWARD_SLASH_TOKEN));
     if (fileName && containingDir) {
       return containingDir.files.delete(fileName);
     }
@@ -163,7 +164,7 @@ export class TypeScriptVFS {
     if (!this._rootDir) {
       this._rootDir = this.loadPhysicalDirectoryToVirtual(
         this.root,
-        new VirtualDirectory(this.root, '/')
+        new VirtualDirectory(this.root, FORWARD_SLASH_TOKEN)
       );
     }
     return this._rootDir;
@@ -259,9 +260,29 @@ export class TypeScriptVFS {
   public clear(): void {
     this._rootDir = this.loadPhysicalDirectoryToVirtual(
       this.root,
-      new VirtualDirectory(this.root, '/')
+      new VirtualDirectory(this.root, FORWARD_SLASH_TOKEN)
     );
     this.flush();
+  }
+
+  public writeOnDisc(outPath: string): void {
+    this.flush();
+    const rootDirPath = path.posix.normalize(path.posix.join(outPath, this.rootDir.name));
+    fs.mkdirSync(rootDirPath, { recursive: true });
+    this.writeDataOnDisc(rootDirPath);
+  }
+
+  private writeDataOnDisc(normalizedOutPath: string, dir?: VirtualDirectory): void {
+    dir = dir || this.rootDir;
+    dir.subDirs.forEach((subdir) => {
+      const subDirPath = path.posix.join(normalizedOutPath, subdir.name);
+      fs.mkdirSync(subDirPath, { recursive: true });
+      this.writeDataOnDisc(subDirPath, subdir);
+    });
+
+    dir.files.forEach((file) => {
+      fs.writeFileSync(path.posix.join(normalizedOutPath, file.name), file.content);
+    });
   }
 
   private flush(): void {
@@ -353,7 +374,8 @@ export class TypeScriptVFS {
 
 
 const vfs = new TypeScriptVFS("../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project");
-const sourceFiles = vfs.getSourceFiles();
+const c = vfs.writeOnDisc("C:/Users/bpenkov/Downloads");
+// const sourceFiles = vfs.getSourceFiles();
 const a = 5;
 vfs.createFile("testing.ts", "const test = 5;");
 vfs.deleteFile("testing.ts");
