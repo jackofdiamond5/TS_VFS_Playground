@@ -88,8 +88,8 @@ export class VirtualDirectory {
     const parts = normalizedSearchPath.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
     const fileName = parts.pop();
 
-    const containingDir = this.findSubDirectory(parts.join(FORWARD_SLASH_TOKEN));
-    if (fileName && containingDir) {
+    const containingDir = this.findSubDirectory(parts.join(FORWARD_SLASH_TOKEN)) || this;
+    if (fileName) {
       return containingDir.files.get(fileName) || null;
     }
 
@@ -159,6 +159,8 @@ export class TypeScriptVFS {
     lib: ["es2018", "dom"]
   };
 
+  private readonly _watchedFilesMap: Map<string, string> = new Map<string, string>();
+
   private _rootDir: VirtualDirectory | undefined;
   public get rootDir(): VirtualDirectory {
     if (!this._rootDir) {
@@ -166,6 +168,7 @@ export class TypeScriptVFS {
         this.root,
         new VirtualDirectory(this.root, FORWARD_SLASH_TOKEN)
       );
+      this.flush();
     }
     return this._rootDir;
   }
@@ -218,7 +221,12 @@ export class TypeScriptVFS {
   }
 
   public createFile(name: string, content: string): VirtualFile {
-    return this.rootDir.addFile(name, content);
+    const newFile = this.rootDir.addFile(name, content);
+    this._watchedFilesMap.set(newFile.name,
+      path.posix.relative(path.posix.resolve(this.root),
+        path.posix.resolve(newFile.path)));
+    this.flush();
+    return newFile;
   }
 
   public fileExists(name: string): boolean {
@@ -233,6 +241,8 @@ export class TypeScriptVFS {
     const file = this.rootDir.findFile(fileName);
     if (file) {
       file.updateContent(content);
+      this._watchedFilesMap.set(file.name, file.path);
+      this.flush();
     }
 
     return file;
@@ -242,8 +252,18 @@ export class TypeScriptVFS {
     return this.rootDir?.findFiles(fileName) || [];
   }
 
-  public deleteFile(name: string): boolean {
-    return this.rootDir.removeFile(name);
+  public deleteFile(filePath: string): boolean {
+    const key = Array.from(this._watchedFilesMap.keys()).find(k => filePath.includes(k));
+    if (key) {
+      this._watchedFilesMap.delete(key);
+    }
+
+    const success = this.rootDir.removeFile(filePath);
+    if (success) {
+      this.flush();
+    }
+
+    return success;
   }
 
   public directoryExists(name: string): boolean {
@@ -265,19 +285,36 @@ export class TypeScriptVFS {
     this.flush();
   }
 
-  public writeOnDisc(outPath: string): void {
+  public finalize(): void;
+  public finalize(outPath: string): void;
+  public finalize(outPath?: string): void {
     this.flush();
-    const rootDirPath = path.posix.normalize(path.posix.join(outPath, this.rootDir.name));
-    fs.mkdirSync(rootDirPath, { recursive: true });
-    this.writeDataOnDisc(rootDirPath);
+    if (outPath) {
+      const rootDirPath = path.posix.normalize(path.posix.join(outPath, this.rootDir.name));
+      fs.mkdirSync(rootDirPath, { recursive: true });
+      this.writeDirToFS(rootDirPath);
+      return;
+    }
+
+    this.updateFilesOnDisc();
   }
 
-  private writeDataOnDisc(normalizedOutPath: string, dir?: VirtualDirectory): void {
+  private updateFilesOnDisc(): void {
+    for (const kvp of this._watchedFilesMap) {
+      const file = this.rootDir.findFile(kvp[1]);
+      if (file) {
+        fs.writeFileSync(file.path, file.content);
+      }
+    }
+    this._watchedFilesMap.clear();
+  }
+
+  private writeDirToFS(normalizedOutPath: string, dir?: VirtualDirectory): void {
     dir = dir || this.rootDir;
     dir.subDirs.forEach((subdir) => {
       const subDirPath = path.posix.join(normalizedOutPath, subdir.name);
       fs.mkdirSync(subDirPath, { recursive: true });
-      this.writeDataOnDisc(subDirPath, subdir);
+      this.writeDirToFS(subDirPath, subdir);
     });
 
     dir.files.forEach((file) => {
@@ -374,10 +411,11 @@ export class TypeScriptVFS {
 
 
 const vfs = new TypeScriptVFS("../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project");
-const c = vfs.writeOnDisc("C:/Users/bpenkov/Downloads");
+const c = vfs.finalize("C:/Users/bpenkov/Downloads");
 // const sourceFiles = vfs.getSourceFiles();
 const a = 5;
 vfs.createFile("testing.ts", "const test = 5;");
+vfs.finalize();
 vfs.deleteFile("testing.ts");
 const test = vfs.directoryExists("src");
 const b = 6;
