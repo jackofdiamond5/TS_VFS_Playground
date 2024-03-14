@@ -7,6 +7,7 @@ import {
   createDefaultMapFromNodeModules,
   createFSBackedSystem,
   createSystem,
+  createVirtualLanguageServiceHost,
   createVirtualTypeScriptEnvironment
 } from "@typescript/vfs";
 
@@ -21,12 +22,14 @@ export class TypeScriptSourceManager {
 export class VirtualDirectory {
   public readonly subDirs: Map<string, VirtualDirectory>;
   public readonly files: Map<string, VirtualFile>;
-  public readonly path: string = '';
+  public readonly path: string = '/';
 
-  constructor(public readonly name: string, parentPath: string = '') {
+  constructor(public readonly name: string, public readonly parentDir: VirtualDirectory | null) {
     this.subDirs = new Map<string, VirtualDirectory>();
     this.files = new Map<string, VirtualFile>();
-    this.path = path.posix.join(parentPath, name);
+    if (parentDir) {
+      this.path = path.posix.join(parentDir.path + FORWARD_SLASH_TOKEN, name);
+    }
     this.name = path.posix.normalize(name).substring(name.lastIndexOf(FORWARD_SLASH_TOKEN) + 1);
   }
 
@@ -51,7 +54,7 @@ export class VirtualDirectory {
     let currentDir: VirtualDirectory = this;
     parts.forEach(part => {
       if (!currentDir.subDirs.has(part)) {
-        const newDir = new VirtualDirectory(part, currentDir.path + FORWARD_SLASH_TOKEN);
+        const newDir = new VirtualDirectory(part, currentDir);
         currentDir.subDirs.set(part, newDir);
         currentDir = newDir;
       } else {
@@ -132,8 +135,8 @@ export class VirtualFile {
   public readonly extension: string = '';
 
   constructor(public readonly name: string, private _content: string, parentPath: string = '') {
-    this.path = path.posix.join(parentPath, name);
     this.extension = this.getExtension(name);
+    this.path = path.posix.join(parentPath, name);
   }
 
   private _sourceFile: ts.SourceFile | undefined;
@@ -164,7 +167,7 @@ export class TypeScriptVFS {
   constructor(
     public readonly root = DOT_TOKEN,
     private readonly compilerOptions: CompilerOptions = {}
-  ) {}
+  ) { }
 
   private readonly _defaultCompilerOptions: CompilerOptions = {
     baseUrl: this.root,
@@ -181,7 +184,7 @@ export class TypeScriptVFS {
     if (!this._rootDir) {
       this._rootDir = this.loadPhysicalDirectoryToVirtual(
         this.root,
-        new VirtualDirectory(this.root, FORWARD_SLASH_TOKEN)
+        new VirtualDirectory(this.root, null)
       );
       this.flush();
     }
@@ -296,7 +299,7 @@ export class TypeScriptVFS {
     // TODO: store the original state of the rootDir and reset it to that state on clear
     this._rootDir = this.loadPhysicalDirectoryToVirtual(
       this.root,
-      new VirtualDirectory(this.root, FORWARD_SLASH_TOKEN)
+      new VirtualDirectory(this.root, null)
     );
     this.flush();
   }
@@ -305,6 +308,13 @@ export class TypeScriptVFS {
   public finalize(outPath: string): void;
   public finalize(outPath?: string): void {
     this.flush();
+    // TODO
+    // works
+    const lsh = createVirtualLanguageServiceHost(this.environment.sys, [...this.fsMap.keys()], this.getCompilerOptions(), ts);
+    const ls = ts.createLanguageService(lsh.languageServiceHost, ts.createDocumentRegistry());
+    const fileRefs = ls.getFileReferences("/src/app/app-routing.ts");
+    const h = 6;
+
     if (outPath) {
       const rootDirPath = path.posix.normalize(path.posix.join(outPath, this.rootDir.name));
       fs.mkdirSync(rootDirPath, { recursive: true });
@@ -319,7 +329,7 @@ export class TypeScriptVFS {
     for (const kvp of this._watchedFilesMap) {
       const file = this.rootDir.findFile(kvp[1]);
       if (file) {
-        fs.writeFileSync(file.path, file.content);
+        fs.writeFileSync(path.posix.join(this.root, file.path), file.content);
       }
     }
     this._watchedFilesMap.clear();
@@ -428,8 +438,9 @@ export class TypeScriptVFS {
   }
 }
 
-
-const vfs = new TypeScriptVFS("../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project");
+const dir1 = "C:/Users/bpenkov/Downloads/empty-webcomponents-project"
+const dir2 = "../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project";
+const vfs = new TypeScriptVFS(dir2);
 const c = vfs.finalize("C:/Users/bpenkov/Downloads");
 // const sourceFiles = vfs.getSourceFiles();
 const a = 5;
