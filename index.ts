@@ -21,10 +21,17 @@ export enum FileState {
   Deleted = 'deleted'
 }
 
+export type Optional<T> = {
+  [P in keyof T]?: T[P];
+};
+
+export type VFSLanguageService = Optional<ts.LanguageService> & Pick<ts.LanguageService, 'getProgram'>;
+
+
 export interface ISourceManager {
   getSourceFile(filePath: string, content: string): ts.SourceFile | undefined;
   updateEnvironment(filesMap: Map<string, string>): void;
-  get languageService(): ts.LanguageService | undefined;
+  get languageService(): VFSLanguageService | undefined;
 }
 
 export interface IFileSystem {
@@ -130,7 +137,7 @@ export class VirtualDirectory {
     this.name = path.posix.normalize(name).substring(name.lastIndexOf(FORWARD_SLASH_TOKEN) + 1);
   }
 
-  public get languageService(): ts.LanguageService | undefined {
+  public get languageService(): VFSLanguageService | undefined {
     return this.sourceManager?.languageService;
   }
 
@@ -500,7 +507,9 @@ const dir1 = "C:/Users/bpenkov/Downloads/empty-webcomponents-project"
 const dir2 = "../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project";
 const vfs = new TypeScriptVFS(dir2);
 
-// const file = vfs.findFile("src/app/app-routing.ts");
+const file = vfs.findFile("src/app/app-routing.ts");
+const l = file?.parentDir.languageService?.getDefinitionAndBoundSpan!('', 0)
+
 // const sf = file?.sourceFile;
 // const c = vfs.finalize("C:/Users/bpenkov/Downloads");
 // const fileRefs = file?.parentDir.languageService?.getFileReferences(file.path);
@@ -509,6 +518,7 @@ const vfs = new TypeScriptVFS(dir2);
 
 vfs.createFile("/src/testing.ts", "const test = 5;");
 vfs.writeFile("src/testing.ts", "const test = 6;");
+
 
 // bug
 vfs.createFile("rootTesting.ts", "const rootTesting = 5;");
