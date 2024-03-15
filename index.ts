@@ -21,6 +21,20 @@ export interface ISourceManager {
   get languageService(): ts.LanguageService | undefined;
 }
 
+export interface IFileSystem {
+  fileExists(filePath: string): boolean;
+  readFile(filePath: string, encoding?: string): string;
+  writeFile(filePath: string, text: string): void;
+  directoryExists(dirPath: string): boolean;
+
+  /**
+   * Returns a list of file paths under a directory based on a match pattern
+   * @param dirPath Root dir to search in
+   * @param pattern Pattern to match
+   */
+  glob(dirPath: string, pattern: string): string[];
+}
+
 export class TypeScriptSourceManager implements ISourceManager {
   constructor(
     private readonly root: string,
@@ -249,7 +263,7 @@ export class VirtualFile {
   }
 }
 
-export class TypeScriptVFS {
+export class TypeScriptVFS implements IFileSystem {
   constructor(
     public readonly root = DOT_TOKEN,
     private readonly compilerOptions: CompilerOptions = {},
@@ -310,11 +324,16 @@ export class TypeScriptVFS {
     return this.rootDir.findFile(filePath) || null;
   }
 
-  public read(filePath: string): string | undefined {
-    return this.rootDir.findFile(filePath)?.content;
+  public readFile(filePath: string): string {
+    const file = this.rootDir.findFile(filePath);
+    if (!file) {
+      throw new Error(`File ${filePath} not found`);
+    }
+
+    return file.content;
   }
 
-  public overwrite(filePath: string, content: string): VirtualFile | null {
+  public writeFile(filePath: string, content: string): VirtualFile | null {
     const file = this.rootDir.findFile(filePath);
     if (file) {
       file.updateContent(content);
@@ -345,6 +364,19 @@ export class TypeScriptVFS {
 
   public directoryExists(name: string): boolean {
     return this.rootDir.findSubDirectory(name) !== undefined;
+  }
+
+  public glob(dirPath: string, pattern: string): string[] {
+    const dir = this.rootDir.findSubDirectory(dirPath);
+    const entries: string[] = [];
+    pattern = pattern.split("**/*").pop() || pattern;
+    dir?.files.forEach((file) => {
+      if (file.path.endsWith(pattern)) {
+        entries.push(file.path);
+      }
+    });
+
+    return entries;
   }
 
   public getSourceFiles(): readonly ts.SourceFile[] {
