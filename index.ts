@@ -15,6 +15,12 @@ const DOT_TOKEN = ".";
 const FORWARD_SLASH_TOKEN = "/";
 const SUPPORTED_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'];
 
+export enum FileState {
+  New = 'new',
+  Modified = 'modified',
+  Deleted = 'deleted'
+}
+
 export interface ISourceManager {
   getSourceFile(filePath: string, content: string): ts.SourceFile | undefined;
   updateEnvironment(filesMap: Map<string, string>): void;
@@ -214,12 +220,9 @@ export class VirtualDirectory {
   }
 
   public removeFile(searchPath: string): boolean {
-    const normalizedSearchPath = path.posix.normalize(searchPath);
-    const parts = normalizedSearchPath.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
-    const fileName = parts.pop();
-    const containingDir = this.findSubDirectory(parts.join(FORWARD_SLASH_TOKEN));
-    if (fileName && containingDir) {
-      return containingDir.files.delete(fileName);
+    const file = this.findFile(searchPath);
+    if (file) {
+      return file.parentDir.files.delete(file.name);
     }
 
     return false;
@@ -278,7 +281,7 @@ export class TypeScriptVFS implements IFileSystem {
     lib: ["es2018", "dom"]
   };
 
-  private readonly _watchedFilesMap: Map<string, string> = new Map<string, string>();
+  private readonly _watchedFilesMap: Map<FileState, string> = new Map<FileState, string>();
 
   private get sourceManager(): ISourceManager {
     if (!this._sourceManager) {
@@ -309,9 +312,7 @@ export class TypeScriptVFS implements IFileSystem {
 
   public createFile(name: string, content: string): VirtualFile {
     const newFile = this.rootDir.addFile(name, content);
-    this._watchedFilesMap.set(newFile.name,
-      path.posix.relative(path.posix.resolve(this.root),
-        path.posix.resolve(newFile.path)));
+    this._watchedFilesMap.set(FileState.New, newFile.path);
     this.flush();
     return newFile;
   }
@@ -337,7 +338,7 @@ export class TypeScriptVFS implements IFileSystem {
     const file = this.rootDir.findFile(filePath);
     if (file) {
       file.updateContent(content);
-      this._watchedFilesMap.set(file.name, file.path);
+      this._watchedFilesMap.set(FileState.Modified, file.path);
       this.flush();
     }
 
@@ -348,18 +349,24 @@ export class TypeScriptVFS implements IFileSystem {
     return this.rootDir?.findFiles(fileName) || [];
   }
 
+
   public deleteFile(filePath: string): boolean {
-    const key = Array.from(this._watchedFilesMap.keys()).find(k => filePath.includes(k));
+    const key = Array.from(this._watchedFilesMap.keys()).find(k => k.includes(filePath));
     if (key) {
       this._watchedFilesMap.delete(key);
     }
 
-    const success = this.rootDir.removeFile(filePath);
+    const success = this.rootDir.removeFile(key || filePath);
     if (success) {
       this.flush();
+      this._watchedFilesMap.set(FileState.Deleted, key || filePath);
     }
 
     return success;
+  }
+
+  public addDirectory(dirPath: string): VirtualDirectory {
+    return this.rootDir.addSubDirectory(dirPath, this.sourceManager);
   }
 
   public directoryExists(name: string): boolean {
@@ -384,7 +391,6 @@ export class TypeScriptVFS implements IFileSystem {
   }
 
   public clear(): void {
-    // TODO: store the original state of the rootDir and reset it to that state on clear
     this._rootDir = this.loadPhysicalDirectoryToVirtual(
       this.root,
       new VirtualDirectory(this.root, null, this.sourceManager)
@@ -403,15 +409,25 @@ export class TypeScriptVFS implements IFileSystem {
       return;
     }
 
-    // TODO: on finalize make sure that the files on the disc are the same as the files on the virtual file system
     this.updateFilesOnDisc();
   }
 
   private updateFilesOnDisc(): void {
     for (const kvp of this._watchedFilesMap) {
       const file = this.rootDir.findFile(kvp[1]);
-      if (file) {
-        fs.writeFileSync(path.posix.join(this.root, file.path), file.content);
+      switch (kvp[0]) {
+        case FileState.New:
+        case FileState.Modified:
+          if (file) {
+            fs.writeFileSync(path.posix.join(this.root, file.path), file.content);
+          }
+          break;
+        case FileState.Deleted:
+          const filePath = path.posix.join(this.root, file?.path || kvp[1]);
+          if (file || fs.existsSync(filePath)) {
+            fs.rmSync(path.posix.normalize(filePath));
+          }
+          break;
       }
     }
     this._watchedFilesMap.clear();
@@ -484,14 +500,23 @@ const dir1 = "C:/Users/bpenkov/Downloads/empty-webcomponents-project"
 const dir2 = "../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project";
 const vfs = new TypeScriptVFS(dir2);
 
-const file = vfs.findFile("src/app/app-routing.ts");
-const sf = file?.sourceFile;
+// const file = vfs.findFile("src/app/app-routing.ts");
+// const sf = file?.sourceFile;
 // const c = vfs.finalize("C:/Users/bpenkov/Downloads");
-const fileRefs = file?.parentDir.languageService?.getFileReferences(file.path);
-const sourceFiles = vfs.getSourceFiles();
-const a = 5;
-// vfs.createFile("testing.ts", "const test = 5;");
-// vfs.finalize();
+// const fileRefs = file?.parentDir.languageService?.getFileReferences(file.path);
+// const sourceFiles = vfs.getSourceFiles();
+// const a = 5;
+
+vfs.createFile("/src/testing.ts", "const test = 5;");
+vfs.writeFile("src/testing.ts", "const test = 6;");
+
+// bug
+vfs.createFile("rootTesting.ts", "const rootTesting = 5;");
+vfs.deleteFile("rootTesting.ts");
+
+vfs.deleteFile("src/index.ts");
+
+vfs.finalize();
 // vfs.deleteFile("testing.ts");
 // const test = vfs.directoryExists("src");
 const b = 6;
