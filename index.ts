@@ -15,8 +15,81 @@ const DOT_TOKEN = ".";
 const FORWARD_SLASH_TOKEN = "/";
 const SUPPORTED_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'];
 
-export class TypeScriptSourceManager {
-  // TODO
+export interface ISourceManager {
+  getSourceFile(filePath: string, content: string): ts.SourceFile | undefined;
+  updateEnvironment(filesMap: Map<string, string>): void;
+  get languageService(): ts.LanguageService | undefined;
+}
+
+export class TypeScriptSourceManager implements ISourceManager {
+  constructor(
+    private readonly root: string,
+    private filesMap: Map<string, string>,
+    private readonly compilerOptions: CompilerOptions) { }
+
+  private _languageServiceHost: ts.LanguageServiceHost | undefined;
+  private get languageServiceHost(): ts.LanguageServiceHost {
+    if (!this._languageServiceHost) {
+      this._languageServiceHost = this.createLanguageServiceHost();
+    }
+
+    return this._languageServiceHost;
+  }
+
+  private _environment: VirtualTypeScriptEnvironment | undefined;
+  private get environment(): VirtualTypeScriptEnvironment {
+    if (!this._environment) {
+      this._environment = this.createEnvironment();
+    }
+    return this._environment;
+  }
+
+  public get languageService(): ts.LanguageService | undefined {
+    return ts.createLanguageService(this.languageServiceHost, ts.createDocumentRegistry());
+  }
+
+  public getSourceFile(filePath: string, content: string): ts.SourceFile | undefined {
+    return ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+  }
+
+  public updateEnvironment(filesMap: Map<string, string>): void {
+    this.filesMap = filesMap;
+    this._environment = this.createEnvironment();
+    this._languageServiceHost = this.createLanguageServiceHost();
+  }
+
+  private createEnvironment(): VirtualTypeScriptEnvironment {
+    const targetSystem =
+      fs.existsSync(this.root) && fs.statSync(this.root).isDirectory()
+        ? createFSBackedSystem(this.filesMap, this.root, ts)
+        : createSystem(this.filesMap);
+    const env = createVirtualTypeScriptEnvironment(
+      targetSystem,
+      [],
+      ts,
+      this.compilerOptions
+    );
+
+    //#region these methods are not implemented in the virtual environment
+    // not needed atm but might be useful to implement them in the future
+    env.sys.write = (_s) => { }; // maybe include logging?
+    env.sys.getExecutingFilePath = () => '';
+    env.sys.createDirectory = (_path) => { };
+    env.sys.deleteFile = (_name) => { };
+    //#endregion
+
+    return env;
+  }
+
+  private createLanguageServiceHost(): ts.LanguageServiceHost {
+    return createVirtualLanguageServiceHost(
+      this.environment.sys,
+      [...this.filesMap.keys()],
+      this.compilerOptions,
+      ts
+    )
+      .languageServiceHost;
+  }
 }
 
 export class VirtualDirectory {
@@ -24,13 +97,21 @@ export class VirtualDirectory {
   public readonly files: Map<string, VirtualFile>;
   public readonly path: string = '/';
 
-  constructor(public readonly name: string, public readonly parentDir: VirtualDirectory | null) {
+  constructor(
+    public readonly name: string,
+    public readonly parentDir: VirtualDirectory | null,
+    public readonly sourceManager?: ISourceManager
+  ) {
     this.subDirs = new Map<string, VirtualDirectory>();
     this.files = new Map<string, VirtualFile>();
     if (parentDir) {
       this.path = path.posix.join(parentDir.path + FORWARD_SLASH_TOKEN, name);
     }
     this.name = path.posix.normalize(name).substring(name.lastIndexOf(FORWARD_SLASH_TOKEN) + 1);
+  }
+
+  public get languageService(): ts.LanguageService | undefined {
+    return this.sourceManager?.languageService;
   }
 
   public findSubDirectory(searchPath: string): VirtualDirectory | undefined {
@@ -49,12 +130,12 @@ export class VirtualDirectory {
     return currentDir;
   }
 
-  public addSubDirectory(dirPath: string): VirtualDirectory {
+  public addSubDirectory(dirPath: string, sourceManager: ISourceManager): VirtualDirectory {
     const parts = dirPath.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
     let currentDir: VirtualDirectory = this;
     parts.forEach(part => {
       if (!currentDir.subDirs.has(part)) {
-        const newDir = new VirtualDirectory(part, currentDir);
+        const newDir = new VirtualDirectory(part, currentDir, sourceManager);
         currentDir.subDirs.set(part, newDir);
         currentDir = newDir;
       } else {
@@ -106,10 +187,11 @@ export class VirtualDirectory {
   public addFile(filePath: string, content: string): VirtualFile {
     const parts = filePath.split(FORWARD_SLASH_TOKEN);
     const fileName = parts.pop();
-    const directory = this.addSubDirectory(parts.join(FORWARD_SLASH_TOKEN));
+    const directory = this.addSubDirectory(parts.join(FORWARD_SLASH_TOKEN), this.sourceManager!);
 
     if (fileName) {
-      const newFile = new VirtualFile(fileName, content, directory.path + FORWARD_SLASH_TOKEN);
+      // const newFile = new VirtualFile(fileName, content, directory.path + FORWARD_SLASH_TOKEN, this.sourceManager);
+      const newFile = new VirtualFile(fileName, content, directory);
       directory.files.set(fileName, newFile);
       return newFile;
     } else {
@@ -134,14 +216,17 @@ export class VirtualFile {
   public readonly path: string = '';
   public readonly extension: string = '';
 
-  constructor(public readonly name: string, private _content: string, parentPath: string = '') {
+  constructor(
+    public readonly name: string,
+    private _content: string,
+    public readonly parentDir: VirtualDirectory
+  ) {
     this.extension = this.getExtension(name);
-    this.path = path.posix.join(parentPath, name);
+    this.path = path.posix.join(parentDir.path + FORWARD_SLASH_TOKEN, name);
   }
 
-  private _sourceFile: ts.SourceFile | undefined;
   public get sourceFile(): ts.SourceFile | undefined {
-    return this._sourceFile;
+    return this.parentDir.sourceManager?.getSourceFile(this.path, this.content);
   }
 
   public get content(): string {
@@ -152,8 +237,9 @@ export class VirtualFile {
     this._content = newContent;
   }
 
-  public updateSourceFile(program: ts.Program): void {
-    this._sourceFile = program.getSourceFile(this.path);
+  public updateSourceFile(): void {
+    // TODO: use the TypeScriptFileUpdate to modify the actual AST of the file and then update the VFS
+    throw new Error('Not implemented');
   }
 
   private getExtension(fileName: string): string {
@@ -166,7 +252,8 @@ export class VirtualFile {
 export class TypeScriptVFS {
   constructor(
     public readonly root = DOT_TOKEN,
-    private readonly compilerOptions: CompilerOptions = {}
+    private readonly compilerOptions: CompilerOptions = {},
+    private _sourceManager?: ISourceManager
   ) { }
 
   private readonly _defaultCompilerOptions: CompilerOptions = {
@@ -179,24 +266,23 @@ export class TypeScriptVFS {
 
   private readonly _watchedFilesMap: Map<string, string> = new Map<string, string>();
 
+  private get sourceManager(): ISourceManager {
+    if (!this._sourceManager) {
+      this._sourceManager = new TypeScriptSourceManager(this.root, this.fsMap, this.getCompilerOptions());
+    }
+    return this._sourceManager;
+  }
+
   private _rootDir: VirtualDirectory | undefined;
   public get rootDir(): VirtualDirectory {
     if (!this._rootDir) {
       this._rootDir = this.loadPhysicalDirectoryToVirtual(
         this.root,
-        new VirtualDirectory(this.root, null)
+        new VirtualDirectory(this.root, null, this.sourceManager)
       );
       this.flush();
     }
     return this._rootDir;
-  }
-
-  private _environment: VirtualTypeScriptEnvironment | undefined;
-  private get environment(): VirtualTypeScriptEnvironment {
-    if (!this._environment) {
-      this._environment = this.createEnvironment();
-    }
-    return this._environment;
   }
 
   private _fsMap: Map<string, string> | undefined;
@@ -205,37 +291,6 @@ export class TypeScriptVFS {
       this._fsMap = this.createDefaultMap();
     }
     return this._fsMap;
-  }
-
-  private _watchProgram: ts.WatchOfFilesAndCompilerOptions<ts.SemanticDiagnosticsBuilderProgram> | undefined;
-  private get watchProgram(): ts.WatchOfFilesAndCompilerOptions<ts.SemanticDiagnosticsBuilderProgram> {
-    if (!this._watchProgram) {
-      this._watchProgram = ts.createWatchProgram(this.host);
-    }
-    return this._watchProgram;
-  }
-
-  private _program!: ts.Program;
-  private get program() {
-    if (!this._program) {
-      this._program = this.watchProgram.getProgram().getProgram();
-    }
-    return this._program;
-  }
-  private set program(program: ts.Program) {
-    this._program = program;
-  }
-
-  private _host: ts.WatchCompilerHostOfFilesAndCompilerOptions<ts.SemanticDiagnosticsBuilderProgram> | undefined;
-  private get host(): ts.WatchCompilerHostOfFilesAndCompilerOptions<ts.SemanticDiagnosticsBuilderProgram> {
-    if (!this._host) {
-      this._host = ts.createWatchCompilerHost( // createVirtualCompilerHost
-        [...this.fsMap.keys()],
-        this.getCompilerOptions(),
-        this.environment.sys
-      );
-    }
-    return this._host;
   }
 
   public createFile(name: string, content: string): VirtualFile {
@@ -247,16 +302,20 @@ export class TypeScriptVFS {
     return newFile;
   }
 
-  public fileExists(name: string): boolean {
-    return this.rootDir.findFile(name) !== null;
+  public fileExists(filePath: string): boolean {
+    return this.rootDir.findFile(filePath) !== null;
   }
 
-  public read(fileName: string): string | undefined {
-    return this.rootDir.findFile(fileName)?.content;
+  public findFile(filePath: string): VirtualFile | null {
+    return this.rootDir.findFile(filePath) || null;
   }
 
-  public overwrite(fileName: string, content: string): VirtualFile | null {
-    const file = this.rootDir.findFile(fileName);
+  public read(filePath: string): string | undefined {
+    return this.rootDir.findFile(filePath)?.content;
+  }
+
+  public overwrite(filePath: string, content: string): VirtualFile | null {
+    const file = this.rootDir.findFile(filePath);
     if (file) {
       file.updateContent(content);
       this._watchedFilesMap.set(file.name, file.path);
@@ -289,17 +348,14 @@ export class TypeScriptVFS {
   }
 
   public getSourceFiles(): readonly ts.SourceFile[] {
-    this.flush();
-    return this.program
-      .getSourceFiles()
-      .filter((sf) => sf.fileName.includes(path.posix.resolve(this.root)));
+    return this.sourceManager?.languageService?.getProgram()?.getSourceFiles() || [];
   }
 
   public clear(): void {
     // TODO: store the original state of the rootDir and reset it to that state on clear
     this._rootDir = this.loadPhysicalDirectoryToVirtual(
       this.root,
-      new VirtualDirectory(this.root, null)
+      new VirtualDirectory(this.root, null, this.sourceManager)
     );
     this.flush();
   }
@@ -308,13 +364,6 @@ export class TypeScriptVFS {
   public finalize(outPath: string): void;
   public finalize(outPath?: string): void {
     this.flush();
-    // TODO
-    // works
-    const lsh = createVirtualLanguageServiceHost(this.environment.sys, [...this.fsMap.keys()], this.getCompilerOptions(), ts);
-    const ls = ts.createLanguageService(lsh.languageServiceHost, ts.createDocumentRegistry());
-    const fileRefs = ls.getFileReferences("/src/app/app-routing.ts");
-    const h = 6;
-
     if (outPath) {
       const rootDirPath = path.posix.normalize(path.posix.join(outPath, this.rootDir.name));
       fs.mkdirSync(rootDirPath, { recursive: true });
@@ -322,6 +371,7 @@ export class TypeScriptVFS {
       return;
     }
 
+    // TODO: on finalize make sure that the files on the disc are the same as the files on the virtual file system
     this.updateFilesOnDisc();
   }
 
@@ -348,21 +398,9 @@ export class TypeScriptVFS {
     });
   }
 
-  // TODO: think of a way to resolve the ts.SourceFile of virtual files on demand (maybe ts.createSourceFile?)
   private flush(): void {
     this._fsMap = this.convertToFsMap(this.rootDir);
-    this.updateProgramSources([...this.fsMap.keys()]);
-    this.updateSourceFiles(this.rootDir, this.program);
-  }
-
-  private updateSourceFiles(dir: VirtualDirectory, program: ts.Program) {
-    dir.files.forEach((file) => {
-      file.updateSourceFile(program);
-    });
-
-    dir.subDirs.forEach((subdir) => {
-      this.updateSourceFiles(subdir, program);
-    });
+    this.sourceManager?.updateEnvironment(this.fsMap);
   }
 
   private convertToFsMap(dir: VirtualDirectory, fsMap: Map<string, string> = new Map()): Map<string, string> {
@@ -384,7 +422,7 @@ export class TypeScriptVFS {
     for (const entry of entries) {
       const entryPath = path.posix.join(physicalDirPath, entry.name);
       if (entry.isDirectory()) {
-        const newVirtualDir = virtualDir.addSubDirectory(entry.name);
+        const newVirtualDir = virtualDir.addSubDirectory(entry.name, this.sourceManager);
         this.loadPhysicalDirectoryToVirtual(entryPath, newVirtualDir);
       } else if (entry.isFile()) {
         const fileContent = fs.readFileSync(entryPath, 'utf8');
@@ -393,34 +431,6 @@ export class TypeScriptVFS {
     }
 
     return virtualDir;
-  }
-
-  private updateProgramSources(fileNames: string[]) {
-    this.watchProgram.updateRootFileNames(fileNames);
-    this.program = this.watchProgram.getProgram().getProgram();
-  }
-
-  private createEnvironment(): VirtualTypeScriptEnvironment {
-    const targetSystem =
-      fs.existsSync(this.root) && fs.statSync(this.root).isDirectory()
-        ? createFSBackedSystem(this.fsMap, this.root, ts)
-        : createSystem(this.fsMap);
-    const env = createVirtualTypeScriptEnvironment(
-      targetSystem,
-      [],
-      ts,
-      this.getCompilerOptions()
-    );
-
-    // these methods are not implemented in the virtual environment
-    env.sys.write = (_s) => { }; // maybe include logging?
-    env.sys.getExecutingFilePath = () => this.root;
-    env.sys.createDirectory = (_path) => { };
-    env.sys.deleteFile = (name) => {
-      this.fsMap.delete(name);
-    };
-
-    return env;
   }
 
   private createDefaultMap(): Map<string, string> {
@@ -441,11 +451,15 @@ export class TypeScriptVFS {
 const dir1 = "C:/Users/bpenkov/Downloads/empty-webcomponents-project"
 const dir2 = "../CodeGen/Source/WebService/bin/Debug/net6.0/empty-webcomponents-project";
 const vfs = new TypeScriptVFS(dir2);
-const c = vfs.finalize("C:/Users/bpenkov/Downloads");
-// const sourceFiles = vfs.getSourceFiles();
+
+const file = vfs.findFile("src/app/app-routing.ts");
+const sf = file?.sourceFile;
+// const c = vfs.finalize("C:/Users/bpenkov/Downloads");
+const fileRefs = file?.parentDir.languageService?.getFileReferences(file.path);
+const sourceFiles = vfs.getSourceFiles();
 const a = 5;
-vfs.createFile("testing.ts", "const test = 5;");
-vfs.finalize();
-vfs.deleteFile("testing.ts");
-const test = vfs.directoryExists("src");
+// vfs.createFile("testing.ts", "const test = 5;");
+// vfs.finalize();
+// vfs.deleteFile("testing.ts");
+// const test = vfs.directoryExists("src");
 const b = 6;
