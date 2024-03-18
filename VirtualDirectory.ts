@@ -102,7 +102,6 @@ export class VirtualDirectory {
         const directory = this.addSubDirectory(parts.join(FORWARD_SLASH_TOKEN), this.sourceManager!);
 
         if (fileName) {
-            // const newFile = new VirtualFile(fileName, content, directory.path + FORWARD_SLASH_TOKEN, this.sourceManager);
             const newFile = new VirtualFile(fileName, content, directory);
             directory.files.set(fileName, newFile);
             return newFile;

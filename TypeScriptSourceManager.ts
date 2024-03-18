@@ -9,7 +9,6 @@ import {
 } from "@typescript/vfs";
 import { ISourceManager } from "./ISourceManager";
 
-
 export class TypeScriptSourceManager implements ISourceManager {
     constructor(
         private readonly root: string,

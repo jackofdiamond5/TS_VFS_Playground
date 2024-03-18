@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import path from "path";
 import ts, { CompilerOptions } from "typescript";
 
 import { createDefaultMapFromNodeModules } from "@typescript/vfs";
@@ -7,7 +8,6 @@ import { TypeScriptSourceManager } from "./TypeScriptSourceManager";
 import { VirtualDirectory } from "./VirtualDirectory";
 import { VirtualFile } from "./VirtualFile";
 import { FORWARD_SLASH_TOKEN, NODE_MODULES, SUPPORTED_EXTENSIONS } from "./global-constants";
-import path from "path";
 import { FileState } from "./types";
 
 export interface IFileSystem {
@@ -113,15 +113,11 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public deleteFile(filePath: string): boolean {
-        const key = Array.from(this._watchedFilesMap.keys()).find(k => k.includes(filePath));
-        if (key) {
-            this._watchedFilesMap.delete(key);
-        }
-
-        const success = this.rootDir.removeFile(key || filePath);
+        const key = Array.from(this._watchedFilesMap.keys()).find(k => filePath.includes(k)) || filePath;
+        const success = this.rootDir.removeFile(key);
         if (success) {
             this.flush();
-            this._watchedFilesMap.set(FileState.Deleted, key || filePath);
+            this._watchedFilesMap.set(FileState.Deleted, key);
         }
 
         return success;
