@@ -4,11 +4,12 @@
     "lib": ["es2018", "dom"],
     "target": "es6",
     "module": "commonjs",
-    "types": ["node"],
+    "types": ["node", "jasmine"],
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "sourceMap": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "outDir": "./output"
   }
 }

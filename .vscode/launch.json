@@ -12,10 +12,20 @@
                 "<node_internals>/**"
             ],
             "preLaunchTask": "build",
-            "program": "${workspaceFolder}\\index.js",
+            "program": "${workspaceFolder}/output/index.js",
             "outFiles": [
-                "${workspaceFolder}/**/*.js"
+                "${workspaceFolder}/output/**/*.js"
             ]
-        }
+        },
+		{
+			"type": "node",
+			"request": "launch",
+			"name": "Launch Test",
+			"program": "${workspaceFolder}/output/jasmine-runner.js",
+			"preLaunchTask": "build",
+			"outFiles": [
+                "${workspaceFolder}/output/spec/**/*.js"
+            ]
+		}
     ]
 }
