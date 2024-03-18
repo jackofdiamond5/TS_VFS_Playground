@@ -39,4 +39,3 @@ export class VirtualFile {
       return fileName.substring(dotIndex + 1);
     }
   }
-  

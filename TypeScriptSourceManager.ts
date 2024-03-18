@@ -13,7 +13,8 @@ export class TypeScriptSourceManager implements ISourceManager {
     constructor(
         private readonly root: string,
         private filesMap: Map<string, string>,
-        private readonly compilerOptions: CompilerOptions) { }
+        private readonly compilerOptions: CompilerOptions
+    ) { }
 
     private _languageServiceHost: ts.LanguageServiceHost | undefined;
     private get languageServiceHost(): ts.LanguageServiceHost {

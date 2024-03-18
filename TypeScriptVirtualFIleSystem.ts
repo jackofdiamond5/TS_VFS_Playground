@@ -81,7 +81,7 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public fileExists(filePath: string): boolean {
-        return this.rootDir.findFile(filePath) !== null;
+        return this.findFile(filePath) !== null;
     }
 
     public findFile(filePath: string): VirtualFile | null {
@@ -89,7 +89,7 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public readFile(filePath: string): string {
-        const file = this.rootDir.findFile(filePath);
+        const file = this.findFile(filePath);
         if (!file) {
             throw new Error(`File ${filePath} not found.`);
         }
@@ -98,7 +98,7 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public writeFile(filePath: string, content: string): VirtualFile | null {
-        const file = this.rootDir.findFile(filePath);
+        const file = this.findFile(filePath);
         if (file) {
             file.updateContent(content);
             this._watchedFilesMap.set(FileState.Modified, file.path);
@@ -109,7 +109,7 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public findFiles(fileName: string): VirtualFile[] {
-        return this.rootDir?.findFiles(fileName) || [];
+        return this.rootDir.findFiles(fileName) || [];
     }
 
     public deleteFile(filePath: string): boolean {
