@@ -96,8 +96,15 @@ export class VirtualDirectory {
         return null;
     }
 
-    public addFile(filePath: string, content: string): VirtualFile {
-        const parts = filePath.split(FORWARD_SLASH_TOKEN);
+    public addFile(file: VirtualFile): VirtualFile;
+    public addFile(filePath: string | VirtualFile, content: string): VirtualFile;
+    public addFile(pathOrFile: string | VirtualFile, content: string = ''): VirtualFile {
+        if (pathOrFile instanceof VirtualFile) {
+            this.files.set(pathOrFile.name, pathOrFile);
+            return pathOrFile;
+        }
+
+        const parts = pathOrFile.split(FORWARD_SLASH_TOKEN);
         const fileName = parts.pop();
         const directory = this.addSubDirectory(parts.join(FORWARD_SLASH_TOKEN), this.sourceManager!);
 
@@ -110,12 +117,44 @@ export class VirtualDirectory {
         }
     }
 
-    public removeFile(searchPath: string): boolean {
-        const file = this.findFile(searchPath);
-        if (file) {
-            return file.parentDir.files.delete(file.name);
+    public moveFile(file: VirtualFile, target: VirtualDirectory, newFileName?: string): VirtualFile | null {
+        const existingFile = target.files.get(file.name);
+        const clone = this.cloneFile(newFileName || file.name, file, target);
+        let success = true;
+        if (existingFile && !newFileName) {
+            success = target.removeFile(existingFile) 
+                && this.removeFile(file);
         }
 
-        return false;
+        if (success) {
+            return target.addFile(clone);
+        }
+
+        return null;
+    }
+
+    public copyFile(file: VirtualFile, target: VirtualDirectory, newFileName?: string): VirtualFile | null {
+        let fileName = file.name;
+        const existingFile = target.files.get(fileName);
+        if (existingFile && !newFileName) {
+            let counter = 1;
+            // clean up any (<number>) elements
+            const baseName = fileName.replace(/\(\d+\)/, '');
+            fileName = `${baseName}(${counter})${file.extension}`;
+            while (target.files.has(fileName)) {
+                fileName = `${baseName}(${++counter})${file.extension}`;
+            }
+        }
+
+        const clone = this.cloneFile(newFileName || fileName, file, target);
+        return target.addFile(clone);
+    }
+
+    private cloneFile(newFileName: string, file: VirtualFile, target: VirtualDirectory): VirtualFile {
+        return new VirtualFile(newFileName, file.content, target);
+    }
+
+    public removeFile(file: VirtualFile): boolean {
+        return this.files.delete(file.name);
     }
 }

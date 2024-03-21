@@ -100,7 +100,7 @@ export class TypeScriptVFS implements IFileSystem {
     public writeFile(filePath: string, content: string): VirtualFile | null {
         const file = this.findFile(filePath);
         if (file) {
-            file.updateContent(content);
+            file.content = content;
             this._watchedFilesMap.set(FileState.Modified, file.path);
             this.flush();
         }
@@ -112,9 +112,51 @@ export class TypeScriptVFS implements IFileSystem {
         return this.rootDir.findFiles(fileName) || [];
     }
 
+    public copyFile(filePath: string, targetDirPath: string, newFileName?: string): VirtualFile | null {
+        const file = this.findFile(filePath);
+        if (!file) {
+            return null;
+        }
+
+        const target = this.findDirectory(targetDirPath);
+        if (!target) {
+            return null;
+        }
+
+        const fileCopy = file.parentDir.copyFile(file, target, newFileName);
+        if (fileCopy) {
+            this.flush();
+        }
+
+        return fileCopy;
+    }
+
+    public moveFile(filePath: string, targetDirPath: string, newFileName?: string): VirtualFile | null {
+        const file = this.findFile(filePath);
+        if (!file) {
+            return null;
+        }
+
+        const target = this.findDirectory(targetDirPath);
+        if (!target) {
+            return null;
+        }
+
+        const movedFile = file.parentDir.moveFile(file, target, newFileName);
+        if (movedFile) {
+            this.flush();
+        }
+
+        return movedFile;
+    }
+
     public deleteFile(filePath: string): boolean {
         const key = Array.from(this._watchedFilesMap.keys()).find(k => filePath.includes(k)) || filePath;
-        const success = this.rootDir.removeFile(key);
+        const file = this.findFile(key);
+        let success = false;
+        if (file) {
+            success = this.rootDir.removeFile(file);
+        }
         if (success) {
             this.flush();
             this._watchedFilesMap.set(FileState.Deleted, key);
@@ -127,12 +169,16 @@ export class TypeScriptVFS implements IFileSystem {
         return this.rootDir.addSubDirectory(dirPath, this.sourceManager);
     }
 
-    public directoryExists(name: string): boolean {
-        return this.rootDir.findSubDirectory(name) !== undefined;
+    public findDirectory(dirPath: string): VirtualDirectory | null {
+        return this.rootDir.findSubDirectory(dirPath) || null;
+    }
+
+    public directoryExists(dirPath: string): boolean {
+        return !!this.findDirectory(dirPath);
     }
 
     public glob(dirPath: string, pattern: string): string[] {
-        const dir = this.rootDir.findSubDirectory(dirPath);
+        const dir = this.findDirectory(dirPath);
         const entries: string[] = [];
         pattern = pattern.split("**/*").pop() || pattern;
         dir?.files.forEach((file) => {

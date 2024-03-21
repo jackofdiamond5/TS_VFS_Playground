@@ -9,7 +9,7 @@ export class VirtualFile {
   
     constructor(
       public readonly name: string,
-      private _content: string,
+      public content: string,
       public readonly parentDir: VirtualDirectory
     ) {
       this.extension = this.getExtension(name);
@@ -18,14 +18,6 @@ export class VirtualFile {
   
     public get sourceFile(): ts.SourceFile | undefined {
       return this.parentDir.sourceManager?.getSourceFile(this.path, this.content);
-    }
-  
-    public get content(): string {
-      return this._content;
-    }
-  
-    public updateContent(newContent: string): void {
-      this._content = newContent;
     }
   
     public updateSourceFile(): void {
