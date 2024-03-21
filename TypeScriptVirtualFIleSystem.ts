@@ -12,7 +12,7 @@ import { FileState } from "./types";
 
 export interface IFileSystem {
     fileExists(filePath: string): boolean;
-    readFile(filePath: string, encoding?: string): string;
+    readFile(filePath: string, encoding?: string): string | null;
     writeFile(filePath: string, text: string): void;
     directoryExists(dirPath: string): boolean;
 
@@ -88,10 +88,10 @@ export class TypeScriptVFS implements IFileSystem {
         return this.rootDir.findFile(filePath) || null;
     }
 
-    public readFile(filePath: string): string {
+    public readFile(filePath: string): string | null {
         const file = this.findFile(filePath);
         if (!file) {
-            throw new Error(`File ${filePath} not found.`);
+            return null;
         }
 
         return file.content;
@@ -113,6 +113,10 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public copyFile(filePath: string, targetDirPath: string, newFileName?: string): VirtualFile | null {
+        if (!targetDirPath) {
+            return null;
+        }
+
         const file = this.findFile(filePath);
         if (!file) {
             return null;
@@ -132,6 +136,10 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public moveFile(filePath: string, targetDirPath: string, newFileName?: string): VirtualFile | null {
+        if (!targetDirPath) {
+            return null;
+        }
+
         const file = this.findFile(filePath);
         if (!file) {
             return null;
@@ -155,7 +163,7 @@ export class TypeScriptVFS implements IFileSystem {
         const file = this.findFile(key);
         let success = false;
         if (file) {
-            success = this.rootDir.removeFile(file);
+            success = file.parentDir.removeFile(file);
         }
         if (success) {
             this.flush();
@@ -167,6 +175,10 @@ export class TypeScriptVFS implements IFileSystem {
 
     public addDirectory(dirPath: string): VirtualDirectory {
         return this.rootDir.addSubDirectory(dirPath, this.sourceManager);
+    }
+
+    public removeDirectory(dirPath: string, force: boolean = false): boolean {
+        return this.rootDir.removeSubDirectory(dirPath, force);
     }
 
     public findDirectory(dirPath: string): VirtualDirectory | null {
@@ -227,9 +239,19 @@ export class TypeScriptVFS implements IFileSystem {
     private updateFilesOnDisc(): void {
         for (const kvp of this._watchedFilesMap) {
             const file = this.rootDir.findFile(kvp[1]);
+            const dir = path
+                .posix
+                .join(
+                    this.root,
+                    file?.path.substring(0, file.path.lastIndexOf(FORWARD_SLASH_TOKEN))
+                    || kvp[1]
+                );
             switch (kvp[0]) {
                 case FileState.New:
                 case FileState.Modified:
+                    if (!fs.existsSync(dir)) {
+                        fs.mkdirSync(dir, { recursive: true });
+                    }
                     if (file) {
                         fs.writeFileSync(path.posix.join(this.root, file.path), file.content);
                     }

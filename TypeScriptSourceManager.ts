@@ -41,6 +41,11 @@ export class TypeScriptSourceManager implements ISourceManager {
         return ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
     }
 
+    public getSourceString(sourceFile: ts.SourceFile, options?: ts.PrinterOptions, handlers?: ts.PrintHandlers): string {
+        const printer = ts.createPrinter(options, handlers);
+        return printer.printFile(sourceFile);
+    }
+
     public updateEnvironment(filesMap: Map<string, string>): void {
         this.filesMap = filesMap;
         this._environment = this.createEnvironment();
