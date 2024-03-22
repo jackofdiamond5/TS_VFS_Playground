@@ -189,17 +189,20 @@ export class TypeScriptVFS implements IFileSystem {
         return !!this.findDirectory(dirPath);
     }
 
-    public glob(dirPath: string, pattern: string): string[] {
-        const dir = this.findDirectory(dirPath);
+    public glob(pattern: string): string[] {
+        this.flush();
         const entries: string[] = [];
-        pattern = pattern.split("**/*").pop() || pattern;
-        dir?.files.forEach((file) => {
-            if (file.path.endsWith(pattern)) {
-                entries.push(file.path);
+        const patternExpr = this.globToRegExp(pattern);
+        for (const file of this.fsMap.entries()) {
+            const filePath = pattern.startsWith(FORWARD_SLASH_TOKEN)
+                ? file[0]
+                : this.removeSlashes(file[0]);
+            if (patternExpr.test(filePath)) {
+                entries.push(filePath);
             }
-        });
+        }
 
-        return entries;
+        return entries.sort((a, b) => a.length - b.length);
     }
 
     public getSourceFiles(): readonly ts.SourceFile[] {
@@ -328,5 +331,26 @@ export class TypeScriptVFS implements IFileSystem {
             this._defaultCompilerOptions,
             this.compilerOptions
         );
+    }
+
+    private globToRegExp(glob: string): RegExp {
+        // TODO: add support for more wildcards
+        // Escape special characters for RegExp, except for the glob-specific ones
+        let regExpString = glob.replace(/([.+^$(){}|[\]\\])/g, '\\$&');
+        regExpString = regExpString
+            .replace(/\*\*/g, '.*') // Match any number of directories
+            .replace(/\/\*/g, '\/[^/]*'); // Match any number of characters except '/'
+
+        if (glob.startsWith(FORWARD_SLASH_TOKEN)) {
+            regExpString = '^' + regExpString;
+        } else {
+            regExpString = '(^|/)' + regExpString;
+        }
+
+        return new RegExp(regExpString);
+    }
+
+    private removeSlashes(inputPath: string): string {
+        return inputPath.replace(/^\/+|\/+$/g, '');
     }
 }
