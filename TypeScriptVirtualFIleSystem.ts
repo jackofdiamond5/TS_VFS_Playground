@@ -3,14 +3,12 @@ import path from "path";
 import ts, { CompilerOptions } from "typescript";
 
 import { createDefaultMapFromNodeModules } from "@typescript/vfs";
-import { ISourceManager } from "./ISourceManager";
-import { TypeScriptSourceManager } from "./TypeScriptSourceManager";
-import { VirtualDirectory } from "./VirtualDirectory";
-import { VirtualFile } from "./VirtualFile";
+import { ISourceManager, FileState } from "./types";
+import { TypeScriptSourceManager } from "./vfs-internals/TypeScriptSourceManager";
+import { VirtualDirectory } from "./vfs-internals/VirtualDirectory";
+import { VirtualFile } from "./vfs-internals/VirtualFile";
 import { FORWARD_SLASH_TOKEN, NODE_MODULES, SUPPORTED_EXTENSIONS } from "./global-constants";
-import { FileState } from "./types";
-
-export interface IFileSystem {
+interface IFileSystem {
     fileExists(filePath: string): boolean;
     readFile(filePath: string, encoding?: string): string | null;
     writeFile(filePath: string, text: string): void;

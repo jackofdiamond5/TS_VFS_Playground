@@ -1,5 +1,5 @@
 import { VirtualDirectory } from "./VirtualDirectory";
-import { FORWARD_SLASH_TOKEN, DOT_TOKEN } from "./global-constants";
+import { FORWARD_SLASH_TOKEN, DOT_TOKEN } from "../global-constants";
 import path from "path";
 import ts from "typescript";
 

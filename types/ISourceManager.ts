@@ -1,4 +1,4 @@
-import { VFSLanguageService } from "./types";
+import { VFSLanguageService } from "./VFSLanguageService";
 import ts from "typescript";
 
 export interface ISourceManager {

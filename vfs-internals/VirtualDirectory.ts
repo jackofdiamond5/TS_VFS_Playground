@@ -1,8 +1,8 @@
-import { ISourceManager } from "./ISourceManager";
+import { ISourceManager } from "../types/ISourceManager";
 import { VirtualFile } from "./VirtualFile";
-import { FORWARD_SLASH_TOKEN } from "./global-constants";
+import { FORWARD_SLASH_TOKEN } from "../global-constants";
 import path from "path";
-import { VFSLanguageService } from "./types";
+import { VFSLanguageService } from "../types";
 
 export class VirtualDirectory {
     public readonly subDirs: Map<string, VirtualDirectory>;

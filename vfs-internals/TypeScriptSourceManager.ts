@@ -7,7 +7,7 @@ import {
     createVirtualTypeScriptEnvironment,
     createVirtualLanguageServiceHost
 } from "@typescript/vfs";
-import { ISourceManager } from "./ISourceManager";
+import { ISourceManager } from "../types";
 
 export class TypeScriptSourceManager implements ISourceManager {
     constructor(

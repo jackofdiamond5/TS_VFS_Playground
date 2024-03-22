@@ -1,10 +1,10 @@
 {
-  "name": "ts_vfs_playground",
+  "name": "ts-vfs-playground",
   "version": "1.0.0",
   "description": "some package",
-  "main": "index.js",
+  "main": "./output/index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node ./output/index.js",
     "build": "node ./node_modules/typescript/lib/tsc.js",
     "test": "node ./node_modules/typescript/lib/tsc.js & jasmine ./output/spec/typescript.vfs.spec.js"
   },
