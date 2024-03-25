@@ -172,7 +172,7 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public addDirectory(dirPath: string): VirtualDirectory {
-        return this.rootDir.addSubDirectory(dirPath, this.sourceManager);
+        return this.rootDir.getOrCreateSubDir(dirPath, this.sourceManager);
     }
 
     public removeDirectory(dirPath: string, force: boolean = false): boolean {
@@ -306,7 +306,7 @@ export class TypeScriptVFS implements IFileSystem {
             if (entry.name === NODE_MODULES) continue;
             const entryPath = path.posix.join(physicalDirPath, entry.name);
             if (entry.isDirectory()) {
-                const newVirtualDir = virtualDir.addSubDirectory(entry.name, this.sourceManager);
+                const newVirtualDir = virtualDir.getOrCreateSubDir(entry.name, this.sourceManager);
                 this.loadPhysicalDirectoryToVirtual(entryPath, newVirtualDir);
             } else if (entry.isFile()) {
                 const fileContent = fs.readFileSync(entryPath, 'utf8');

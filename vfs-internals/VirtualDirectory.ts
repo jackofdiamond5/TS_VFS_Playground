@@ -54,7 +54,7 @@ export class VirtualDirectory {
         return undefined;
     }
 
-    public addSubDirectory(dirPath: string, sourceManager: ISourceManager): VirtualDirectory {
+    public getOrCreateSubDir(dirPath: string, sourceManager: ISourceManager): VirtualDirectory {
         const parts = dirPath.split(FORWARD_SLASH_TOKEN).filter(p => p.length);
         let currentDir: VirtualDirectory = this;
         parts.forEach(part => {
@@ -126,7 +126,7 @@ export class VirtualDirectory {
 
         const parts = pathOrFile.split(FORWARD_SLASH_TOKEN);
         const fileName = parts.pop();
-        const directory = this.addSubDirectory(parts.join(FORWARD_SLASH_TOKEN), this.sourceManager!);
+        const directory = this.getOrCreateSubDir(parts.join(FORWARD_SLASH_TOKEN), this.sourceManager!);
 
         if (fileName) {
             const newFile = new VirtualFile(fileName, content, directory);
