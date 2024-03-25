@@ -27,7 +27,8 @@ export class TypeScriptVFS implements IFileSystem {
         public readonly root = FORWARD_SLASH_TOKEN,
         private readonly compilerOptions: CompilerOptions = {},
         private _sourceManager?: ISourceManager,
-        private readonly supportedExtensions = SUPPORTED_EXTENSIONS
+        private readonly supportedExtensions = SUPPORTED_EXTENSIONS,
+        private readonly autoFlush = true
     ) { }
 
     private readonly _defaultCompilerOptions: CompilerOptions = {
@@ -58,7 +59,9 @@ export class TypeScriptVFS implements IFileSystem {
             } catch (err) {
                 this._rootDir = new VirtualDirectory(this.root, null, this.sourceManager);
             }
-            this.flush();
+            if (this.autoFlush) {
+                this.flush();
+            }
         }
         return this._rootDir;
     }
@@ -74,7 +77,10 @@ export class TypeScriptVFS implements IFileSystem {
     public createFile(name: string, content: string): VirtualFile {
         const newFile = this.rootDir.addFile(name, content);
         this._watchedFilesMap.set(FileState.New, newFile.path);
-        this.flush();
+        if (this.autoFlush) {
+            this.flush();
+        }
+
         return newFile;
     }
 
@@ -100,7 +106,9 @@ export class TypeScriptVFS implements IFileSystem {
         if (file) {
             file.content = content;
             this._watchedFilesMap.set(FileState.Modified, file.path);
-            this.flush();
+            if (this.autoFlush) {
+                this.flush();
+            }
         }
 
         return file;
@@ -126,7 +134,7 @@ export class TypeScriptVFS implements IFileSystem {
         }
 
         const fileCopy = file.parentDir.copyFile(file, target, newFileName);
-        if (fileCopy) {
+        if (fileCopy && this.autoFlush) {
             this.flush();
         }
 
@@ -149,7 +157,7 @@ export class TypeScriptVFS implements IFileSystem {
         }
 
         const movedFile = file.parentDir.moveFile(file, target, newFileName);
-        if (movedFile) {
+        if (movedFile && this.autoFlush) {
             this.flush();
         }
 
@@ -163,7 +171,7 @@ export class TypeScriptVFS implements IFileSystem {
         if (file) {
             success = file.parentDir.removeFile(file);
         }
-        if (success) {
+        if (success && this.autoFlush) {
             this.flush();
             this._watchedFilesMap.set(FileState.Deleted, key);
         }
@@ -204,7 +212,9 @@ export class TypeScriptVFS implements IFileSystem {
     }
 
     public getSourceFiles(): readonly ts.SourceFile[] {
-        this.flush();
+        if (this.autoFlush) {
+            this.flush();
+        }
         return this.sourceManager?.languageService?.getProgram()?.getSourceFiles() || [];
     }
 
@@ -213,7 +223,9 @@ export class TypeScriptVFS implements IFileSystem {
             this.root,
             new VirtualDirectory(this.root, null, this.sourceManager)
         );
-        this.flush();
+        if (this.autoFlush) {
+            this.flush();
+        }
     }
 
     public finalize(): void;
@@ -235,6 +247,11 @@ export class TypeScriptVFS implements IFileSystem {
                 throw new Error(`Could not apply virtual file system changes to ${this.root}.`);
             }
         }
+    }
+
+    public flush(): void {
+        this._fsMap = this.convertToFsMap(this.rootDir);
+        this.sourceManager?.updateEnvironment(this.fsMap);
     }
 
     private updateFilesOnDisc(): void {
@@ -279,11 +296,6 @@ export class TypeScriptVFS implements IFileSystem {
         dir.files.forEach((file) => {
             fs.writeFileSync(path.posix.join(normalizedOutPath, file.name), file.content);
         });
-    }
-
-    private flush(): void {
-        this._fsMap = this.convertToFsMap(this.rootDir);
-        this.sourceManager?.updateEnvironment(this.fsMap);
     }
 
     private convertToFsMap(dir: VirtualDirectory, fsMap: Map<string, string> = new Map()): Map<string, string> {
