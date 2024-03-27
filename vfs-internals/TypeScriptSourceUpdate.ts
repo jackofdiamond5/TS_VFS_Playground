@@ -26,8 +26,30 @@ export class FormattingService {
    */
   constructor(
     private sourceFile: ts.SourceFile,
-    private readonly printer: ts.Printer
+    private readonly printer: ts.Printer,
+    private formatOptions: IFormatSettings,
+    private readonly compilerOptions: ts.CompilerOptions
   ) {}
+
+  public applyFormatting(): string {
+    // TODO: add logic to read format settings from .editorconfig or eslint config files
+    // and modify the formatOptions accordingly
+
+    const changes = this.languageService.getFormattingEditsForDocument(
+      this.sourceFile.fileName,
+      this.formatOptions
+    );
+
+    if (this.formatOptions.singleQuotes) {
+      this.sourceFile = ts.transform(
+        this.sourceFile,
+        [this.convertQuotesTransformer],
+        this.compilerOptions
+      ).transformed[0] as ts.SourceFile;
+    }
+
+    return this.applyChanges(this.printer.printFile(this.sourceFile), changes);
+  }
 
   /**
    * The language service host used to access the source file.
@@ -44,7 +66,7 @@ export class FormattingService {
   /**
    * The language service instance used to format the source file.
    */
-  public get languageService(): ts.LanguageService | undefined {
+  private get languageService(): ts.LanguageService {
     return ts.createLanguageService(
       this.languageServiceHost,
       ts.createDocumentRegistry()
@@ -74,11 +96,49 @@ export class FormattingService {
     };
     return servicesHost;
   }
+
+  /**
+   * Transform string literals to use single quotes.
+   * @returns The mutated node.
+   */
+  private convertQuotesTransformer =
+    <T extends ts.Node>(context: ts.TransformationContext) =>
+    (rootNode: T): ts.Node => {
+      const visit = (node: ts.Node): ts.Node => {
+        if (ts.isStringLiteral(node)) {
+          const text = node.text;
+          // the ts.StringLiteral node has a `singleQuote` property that's not part of the public APi for some reason
+          // to make our lives easier we can modify it though
+          const singleQuote = (node as any).singleQuote;
+          const newNode = ts.factory.createStringLiteral(text);
+          (newNode as any).singleQuote =
+            singleQuote || this.formatOptions.singleQuotes;
+
+          return newNode;
+        }
+        return ts.visitEachChild(node, visit, context);
+      };
+      return ts.visitNode(rootNode, visit);
+    };
+
+  /**
+   * Apply formatting changes (position based) in reverse
+   * from https://github.com/Microsoft/TypeScript/issues/1651#issuecomment-69877863
+   */
+  private applyChanges(orig: string, changes: ts.TextChange[]): string {
+    let result = orig;
+    for (let i = changes.length - 1; i >= 0; i--) {
+      const change = changes[i];
+      const head = result.slice(0, change.span.start);
+      const tail = result.slice(change.span.start + change.span.length);
+      result = head + change.newText + tail;
+    }
+
+    return result;
+  }
 }
 
 export class TypeScriptSourceUpdate {
-  private _printer: ts.Printer | undefined;
-
   private _defaultFormatSettings: IFormatSettings = {
     indentSize: 3,
     tabSize: 4,
@@ -96,6 +156,8 @@ export class TypeScriptSourceUpdate {
   private _defaultCompilerOptions: ts.CompilerOptions = {
     pretty: true,
   };
+
+  private _printer: ts.Printer | undefined;
 
   constructor(
     private sourceFile: ts.SourceFile,
@@ -424,60 +486,12 @@ export class TypeScriptSourceUpdate {
    * Finalize the source file and return the formatted content.
    */
   public finalize(): string {
-    const formatter = new FormattingService(this.sourceFile, this.printer);
-    const changes = formatter.languageService?.getFormattingEditsForDocument(
-      this.sourceFile.fileName,
-      this.formatOptions
+    const formatter = new FormattingService(
+      this.sourceFile,
+      this.printer,
+      this.formatOptions,
+      this.compilerOptions
     );
-
-    if (this.formatOptions.singleQuotes) {
-      this.sourceFile = ts.transform(
-        this.sourceFile,
-        [this.convertQuotesTransformer],
-        this.compilerOptions
-      ).transformed[0] as ts.SourceFile;
-    }
-
-    return this.applyChanges(this.printer.printFile(this.sourceFile), changes!);
-  }
-
-  /**
-   * Transform string literals to use single quotes.
-   * @returns The mutated node.
-   */
-  private convertQuotesTransformer =
-    <T extends ts.Node>(context: ts.TransformationContext) =>
-    (rootNode: T): ts.Node => {
-      const visit = (node: ts.Node): ts.Node => {
-        if (ts.isStringLiteral(node)) {
-          const text = node.text;
-          // the ts.StringLiteral node has a `singleQuote` property that's not part of the public APi for some reason
-          // to make our lives easier we can modify it though
-          const singleQuote = (node as any).singleQuote;
-          const newNode = ts.factory.createStringLiteral(text);
-          (newNode as any).singleQuote =
-            singleQuote || this.formatOptions.singleQuotes;
-
-          return newNode;
-        }
-        return ts.visitEachChild(node, visit, context);
-      };
-      return ts.visitNode(rootNode, visit);
-    };
-
-  /**
-   * Apply formatting changes (position based) in reverse
-   * from https://github.com/Microsoft/TypeScript/issues/1651#issuecomment-69877863
-   */
-  private applyChanges(orig: string, changes: ts.TextChange[]): string {
-    let result = orig;
-    for (let i = changes.length - 1; i >= 0; i--) {
-      const change = changes[i];
-      const head = result.slice(0, change.span.start);
-      const tail = result.slice(change.span.start + change.span.length);
-      result = head + change.newText + tail;
-    }
-
-    return result;
+    return formatter.applyFormatting();
   }
 }
