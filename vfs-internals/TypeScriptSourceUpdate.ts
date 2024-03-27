@@ -1,11 +1,5 @@
 import ts from "typescript";
 
-export interface IExpressionChange {
-  type: "import" | "literal" | "decorator";
-  location: { line: number; column: number };
-  newValue: any;
-}
-
 export interface IImport {
   from: string;
   edit: boolean;
@@ -20,13 +14,94 @@ export interface IPropertyAssignment {
   value: ts.Expression;
 }
 
+export interface IFormatSettings extends ts.FormatCodeSettings {
+  singleQuotes?: boolean;
+}
+
+export class FormattingService {
+  /**
+   * Create a new formatting service for the given source file.
+   * @param sourceFile The source file to format.
+   * @param printer The printer instance to use to print the source file.
+   */
+  constructor(
+    private sourceFile: ts.SourceFile,
+    private readonly printer: ts.Printer
+  ) {}
+
+  /**
+   * The language service host used to access the source file.
+   */
+  private _languageServiceHost: ts.LanguageServiceHost | undefined;
+  private get languageServiceHost(): ts.LanguageServiceHost {
+    if (!this._languageServiceHost) {
+      this._languageServiceHost = this.createLanguageServiceHost();
+    }
+
+    return this._languageServiceHost;
+  }
+
+  /**
+   * The language service instance used to format the source file.
+   */
+  public get languageService(): ts.LanguageService | undefined {
+    return ts.createLanguageService(
+      this.languageServiceHost,
+      ts.createDocumentRegistry()
+    );
+  }
+
+  /**
+   * Create a language service host for the source file.
+   * The host is used by TS to access the FS and read the source file.
+   * In this case we are operating on a single source file so we only need to provide its name and contents.
+   */
+  private createLanguageServiceHost(): ts.LanguageServiceHost {
+    const servicesHost: ts.LanguageServiceHost = {
+      getCompilationSettings: () => ({}),
+      getScriptFileNames: () => [this.sourceFile.fileName],
+      getScriptVersion: (_fileName) => "0",
+      getScriptSnapshot: (_fileName) => {
+        return ts.ScriptSnapshot.fromString(
+          this.printer.printFile(this.sourceFile)
+        );
+      },
+      getCurrentDirectory: () => process.cwd(),
+      getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
+      readDirectory: ts.sys.readDirectory,
+      readFile: ts.sys.readFile,
+      fileExists: ts.sys.fileExists,
+    };
+    return servicesHost;
+  }
+}
+
 export class TypeScriptSourceUpdate {
-  private readonly changes: IExpressionChange[] = [];
   private _printer: ts.Printer | undefined;
+
+  private _defaultFormatSettings: IFormatSettings = {
+    indentSize: 3,
+    tabSize: 4,
+    newLineCharacter: ts.sys.newLine,
+    convertTabsToSpaces: true,
+    indentStyle: ts.IndentStyle.Smart,
+    insertSpaceAfterCommaDelimiter: true,
+    insertSpaceAfterSemicolonInForStatements: true,
+    insertSpaceBeforeAndAfterBinaryOperators: true,
+    insertSpaceAfterKeywordsInControlFlowStatements: true,
+    insertSpaceAfterTypeAssertion: true,
+    singleQuotes: true,
+  };
+
+  private _defaultCompilerOptions: ts.CompilerOptions = {
+    pretty: true,
+  };
 
   constructor(
     private sourceFile: ts.SourceFile,
-    private readonly printerOptions?: ts.PrinterOptions
+    private readonly formatSettings?: IFormatSettings,
+    private readonly printerOptions?: ts.PrinterOptions,
+    private readonly customCompilerOptions?: ts.CompilerOptions
   ) {}
 
   /**
@@ -38,6 +113,24 @@ export class TypeScriptSourceUpdate {
     }
 
     return this._printer;
+  }
+
+  /**
+   * The format options to use when printing the source file.
+   */
+  public get formatOptions(): IFormatSettings {
+    return Object.assign({}, this._defaultFormatSettings, this.formatSettings);
+  }
+
+  /**
+   * The compiler options to use when transforming the source file.
+   */
+  public get compilerOptions(): ts.CompilerOptions {
+    return Object.assign(
+      {},
+      this._defaultCompilerOptions,
+      this.customCompilerOptions
+    );
   }
 
   /**
@@ -75,19 +168,42 @@ export class TypeScriptSourceUpdate {
   /**
    * Adds a new property assignment to an object literal expression.
    * @param visitCondition The condition by which the object literal expression is found.
+   * @param propertyAssignment The property that will be added.
+   */
+  public addMemberToObjectLiteral(
+    visitCondition: (node: ts.Node) => boolean,
+    propertyAssignment: IPropertyAssignment
+  ): ts.SourceFile;
+  /**
+   *
+   * @param visitCondition The condition by which the object literal expression is found.
    * @param propertyName The name of the property that will be added.
    * @param propertyValue The value of the property that will be added.
-   * @returns The mutated AST.
    */
   public addMemberToObjectLiteral(
     visitCondition: (node: ts.Node) => boolean,
     propertyName: string,
     propertyValue: ts.Expression
+  ): ts.SourceFile;
+  public addMemberToObjectLiteral(
+    visitCondition: (node: ts.Node) => boolean,
+    propertyNameOrAssignment: string | IPropertyAssignment,
+    propertyValue?: ts.Expression
   ): ts.SourceFile {
-    const newProperty = ts.factory.createPropertyAssignment(
-      ts.factory.createIdentifier(propertyName),
-      propertyValue
-    );
+    let newProperty: ts.PropertyAssignment;
+    if (propertyNameOrAssignment instanceof Object) {
+      newProperty = ts.factory.createPropertyAssignment(
+        propertyNameOrAssignment.name,
+        propertyNameOrAssignment.value
+      );
+    } else if (propertyValue) {
+      newProperty = ts.factory.createPropertyAssignment(
+        ts.factory.createIdentifier(propertyNameOrAssignment as string),
+        propertyValue
+      );
+    } else {
+      throw new Error("Must provide property value.");
+    }
 
     const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
       context: ts.TransformationContext
@@ -106,19 +222,24 @@ export class TypeScriptSourceUpdate {
       };
     };
 
-    return (this.sourceFile = ts.transform(this.sourceFile, [transformer])
-      .transformed[0] as ts.SourceFile);
+    return (this.sourceFile = ts.transform(
+      this.sourceFile,
+      [transformer],
+      this.compilerOptions
+    ).transformed[0] as ts.SourceFile);
   }
 
   /**
-   * Appends a new element at the end of a given array literal expression.
+   * Adds a new element to a given array literal expression.
    * @param visitCondition The condition by which the array literal expression is found.
    * @param elements The elements that will be added to the array literal.
+   * @param prepend If the elements should be added at the beginning of the array.
    * @returns The mutated AST.
    */
   public addMembersToArrayLiteral(
     visitCondition: (node: ts.Node) => boolean,
-    elements: ts.Expression[]
+    elements: ts.Expression[],
+    prepend = false
   ): ts.SourceFile {
     const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
       context: ts.TransformationContext
@@ -126,6 +247,12 @@ export class TypeScriptSourceUpdate {
       return (rootNode: T) => {
         const visitor = (node: ts.Node): ts.VisitResult<ts.Node> => {
           if (ts.isArrayLiteralExpression(node) && visitCondition(node)) {
+            if (prepend) {
+              return ts.factory.updateArrayLiteralExpression(node, [
+                ...elements,
+                ...node.elements,
+              ]);
+            }
             return ts.factory.updateArrayLiteralExpression(node, [
               ...node.elements,
               ...elements,
@@ -137,8 +264,11 @@ export class TypeScriptSourceUpdate {
       };
     };
 
-    return (this.sourceFile = ts.transform(this.sourceFile, [transformer])
-      .transformed[0] as ts.SourceFile);
+    return (this.sourceFile = ts.transform(
+      this.sourceFile,
+      [transformer],
+      this.compilerOptions
+    ).transformed[0] as ts.SourceFile);
   }
 
   /**
@@ -194,8 +324,11 @@ export class TypeScriptSourceUpdate {
       };
     };
 
-    return (this.sourceFile = ts.transform(this.sourceFile, [transformer])
-      .transformed[0] as ts.SourceFile);
+    return (this.sourceFile = ts.transform(
+      this.sourceFile,
+      [transformer],
+      this.compilerOptions
+    ).transformed[0] as ts.SourceFile);
   }
 
   /**
@@ -287,17 +420,64 @@ export class TypeScriptSourceUpdate {
     // multiple imports from the same source should be joined into one
   }
 
-  public finalize() {
-    // TODO
-    // apply formatting to the source file
-    // with the printer get the string representation of the source file
+  /**
+   * Finalize the source file and return the formatted content.
+   */
+  public finalize(): string {
+    const formatter = new FormattingService(this.sourceFile, this.printer);
+    const changes = formatter.languageService?.getFormattingEditsForDocument(
+      this.sourceFile.fileName,
+      this.formatOptions
+    );
+
+    if (this.formatOptions.singleQuotes) {
+      this.sourceFile = ts.transform(
+        this.sourceFile,
+        [this.convertQuotesTransformer],
+        this.compilerOptions
+      ).transformed[0] as ts.SourceFile;
+    }
+
+    return this.applyChanges(this.printer.printFile(this.sourceFile), changes!);
   }
 
-  private addObjectMember<T, K extends string, V>(
-    obj: T,
-    key: K,
-    value: V
-  ): T & { [P in K]: V } {
-    return { ...obj, [key]: value } as T & { [P in K]: V };
+  /**
+   * Transform string literals to use single quotes.
+   * @returns The mutated node.
+   */
+  private convertQuotesTransformer =
+    <T extends ts.Node>(context: ts.TransformationContext) =>
+    (rootNode: T): ts.Node => {
+      const visit = (node: ts.Node): ts.Node => {
+        if (ts.isStringLiteral(node)) {
+          const text = node.text;
+          // the ts.StringLiteral node has a `singleQuote` property that's not part of the public APi for some reason
+          // to make our lives easier we can modify it though
+          const singleQuote = (node as any).singleQuote;
+          const newNode = ts.factory.createStringLiteral(text);
+          (newNode as any).singleQuote =
+            singleQuote || this.formatOptions.singleQuotes;
+
+          return newNode;
+        }
+        return ts.visitEachChild(node, visit, context);
+      };
+      return ts.visitNode(rootNode, visit);
+    };
+
+  /**
+   * Apply formatting changes (position based) in reverse
+   * from https://github.com/Microsoft/TypeScript/issues/1651#issuecomment-69877863
+   */
+  private applyChanges(orig: string, changes: ts.TextChange[]): string {
+    let result = orig;
+    for (let i = changes.length - 1; i >= 0; i--) {
+      const change = changes[i];
+      const head = result.slice(0, change.span.start);
+      const tail = result.slice(change.span.start + change.span.length);
+      result = head + change.newText + tail;
+    }
+
+    return result;
   }
 }
