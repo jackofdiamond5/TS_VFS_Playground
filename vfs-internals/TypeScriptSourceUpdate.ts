@@ -22,8 +22,23 @@ export interface IPropertyAssignment {
 
 export class TypeScriptSourceUpdate {
   private readonly changes: IExpressionChange[] = [];
+  private _printer: ts.Printer | undefined;
 
-  constructor(private readonly sourceFile: ts.SourceFile) {}
+  constructor(
+    private sourceFile: ts.SourceFile,
+    private readonly printerOptions?: ts.PrinterOptions
+  ) {}
+
+  /**
+   * The printer instance to use to print the source file after modifications.
+   */
+  public get printer(): ts.Printer {
+    if (!this._printer) {
+      this._printer = ts.createPrinter(this.printerOptions);
+    }
+
+    return this._printer;
+  }
 
   /**
    * Searches the AST for a variable declaration with the given name and type.
@@ -57,22 +72,12 @@ export class TypeScriptSourceUpdate {
     return declaration;
   }
 
-  public createObjectLiteralExpression(
-    properties: IPropertyAssignment[]
-  ): ts.ObjectLiteralExpression {
-    const propertyAssignments = properties.map((property) =>
-      ts.factory.createPropertyAssignment(property.name, property.value)
-    );
-
-    return ts.factory.createObjectLiteralExpression(propertyAssignments, true);
-  }
-
   /**
    * Adds a new property assignment to an object literal expression.
    * @param visitCondition The condition by which the object literal expression is found.
    * @param propertyName The name of the property that will be added.
    * @param propertyValue The value of the property that will be added.
-   * @returns 
+   * @returns The mutated AST.
    */
   public addMemberToObjectLiteral(
     visitCondition: (node: ts.Node) => boolean,
@@ -101,39 +106,147 @@ export class TypeScriptSourceUpdate {
       };
     };
 
-    return ts.transform(this.sourceFile, [transformer])
-      .transformed[0] as ts.SourceFile;
+    return (this.sourceFile = ts.transform(this.sourceFile, [transformer])
+      .transformed[0] as ts.SourceFile);
   }
 
-  public addMemberToArrayLiteral(
-    arrayLiteral: ts.ArrayLiteralExpression,
-    element: ts.Expression
-  ) {
-    // should append the element at the end of the array literal
-    throw new Error("Method not implemented.");
-    return arrayLiteral;
-  }
-
-  public updateObjectLiteralMember(
-    objectLiteral: ts.ObjectLiteralExpression,
-    memberName: string,
-    value: ts.Expression
-  ) {
-    // if the member is an array, it should add elements to it via the `addMemberToArrayLiteral`
-    // if the member is an object, it should modify it with `addMemberToObjectLiteral`
-    throw new Error("Method not implemented.");
-  }
-
-  public createArrayLiteral(
+  /**
+   * Appends a new element at the end of a given array literal expression.
+   * @param visitCondition The condition by which the array literal expression is found.
+   * @param elements The elements that will be added to the array literal.
+   * @returns The mutated AST.
+   */
+  public addMembersToArrayLiteral(
+    visitCondition: (node: ts.Node) => boolean,
     elements: ts.Expression[]
-  ): ts.ArrayLiteralExpression {
-    throw new Error("Method not implemented.");
+  ): ts.SourceFile {
+    const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
+      context: ts.TransformationContext
+    ) => {
+      return (rootNode: T) => {
+        const visitor = (node: ts.Node): ts.VisitResult<ts.Node> => {
+          if (ts.isArrayLiteralExpression(node) && visitCondition(node)) {
+            return ts.factory.updateArrayLiteralExpression(node, [
+              ...node.elements,
+              ...elements,
+            ]);
+          }
+          return ts.visitEachChild(node, visitor, context);
+        };
+        return ts.visitNode(rootNode, visitor);
+      };
+    };
+
+    return (this.sourceFile = ts.transform(this.sourceFile, [transformer])
+      .transformed[0] as ts.SourceFile);
   }
 
-  public createObjectLiteral(
-    properties: ts.ObjectLiteralElementLike[]
+  /**
+   * Update the value of a member in an object literal expression.
+   * @param visitCondition The condition by which the object literal expression is found.
+   * @param targetMember The member that will be updated. The value should be new value to set.
+   * @returns The mutated AST.
+   * @remarks This method will not update nodes that were inserted through the compiler API.
+   * And the `visitCondition` should ignore nodes that have `pos` & `end` less than 0.
+   */
+  public updateObjectLiteralMember(
+    visitCondition: (node: ts.Node) => boolean,
+    targetMember: IPropertyAssignment
+  ): ts.SourceFile {
+    const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
+      context: ts.TransformationContext
+    ) => {
+      return (rootNode: T) => {
+        const visitor = (node: ts.Node): ts.VisitResult<ts.Node> => {
+          if (ts.isObjectLiteralExpression(node) && visitCondition(node)) {
+            const newProperties = node.properties.map((property) => {
+              const isPropertyAssignment = ts.isPropertyAssignment(property);
+              if (
+                isPropertyAssignment &&
+                (property.pos < 0 || property.end < 0)
+              ) {
+                // nodes inserted through the compiler API will have pos & end < 0
+                // we cannot update them until the source file is read anew and the nodes are re-created
+                // since pos & end are set during initial parsing and are readonly
+                return property;
+              }
+              if (
+                isPropertyAssignment &&
+                property.name.getText() === targetMember.name
+              ) {
+                return ts.factory.updatePropertyAssignment(
+                  property,
+                  property.name,
+                  targetMember.value
+                );
+              }
+              return property;
+            });
+
+            return ts.factory.updateObjectLiteralExpression(
+              node,
+              newProperties
+            );
+          }
+          return ts.visitEachChild(node, visitor, context);
+        };
+        return ts.visitNode(rootNode, visitor);
+      };
+    };
+
+    return (this.sourceFile = ts.transform(this.sourceFile, [transformer])
+      .transformed[0] as ts.SourceFile);
+  }
+
+  /**
+   * Creates a new object literal expression with the given properties.
+   * @param properties The properties to add to the object literal.
+   */
+  public createObjectLiteralExpression(
+    properties: IPropertyAssignment[]
   ): ts.ObjectLiteralExpression {
-    throw new Error("Method not implemented.");
+    const propertyAssignments = properties.map((property) =>
+      ts.factory.createPropertyAssignment(property.name, property.value)
+    );
+
+    return ts.factory.createObjectLiteralExpression(propertyAssignments, true);
+  }
+
+  /**
+   * Create an array literal expression with the given elements.
+   * @param elements The elements to include in the array literal.
+   * @param multiline Whether the array literal should be multiline.
+   */
+  public createArrayLiteralExpression(
+    elements: ts.Expression[],
+    multiline?: boolean
+  ): ts.ArrayLiteralExpression;
+  public createArrayLiteralExpression(
+    elements: IPropertyAssignment[],
+    multiline?: boolean
+  ): ts.ArrayLiteralExpression;
+  public createArrayLiteralExpression(
+    elementsOrProperties: ts.Expression[] | IPropertyAssignment[],
+    multiline = false
+  ): ts.ArrayLiteralExpression {
+    if (
+      elementsOrProperties.every((element) =>
+        ts.isExpression(element as ts.Node)
+      )
+    ) {
+      return ts.factory.createArrayLiteralExpression(
+        elementsOrProperties as ts.Expression[],
+        multiline
+      );
+    }
+
+    const propertyAssignments = (
+      elementsOrProperties as IPropertyAssignment[]
+    ).map((property) => this.createObjectLiteralExpression([property]));
+    return ts.factory.createArrayLiteralExpression(
+      propertyAssignments,
+      multiline
+    );
   }
 
   public updateClassDecorator(
@@ -176,6 +289,8 @@ export class TypeScriptSourceUpdate {
 
   public finalize() {
     // TODO
+    // apply formatting to the source file
+    // with the printer get the string representation of the source file
   }
 
   private addObjectMember<T, K extends string, V>(
