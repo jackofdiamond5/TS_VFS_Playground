@@ -1,6 +1,8 @@
 import ts from "typescript";
 import * as fs from "fs";
 import * as path from "path";
+import { NEW_LINE_PLACEHOLDER } from "../global-constants";
+import { Util } from "./Util";
 
 export interface IImport {
   from: string;
@@ -55,6 +57,9 @@ export class FormattingService implements IFormattingService {
     private readonly compilerOptions?: ts.CompilerOptions
   ) {}
 
+  /**
+   * Apply formatting to the source file.
+   */
   public applyFormatting(): string {
     this.readFormatConfigs();
     const changes = this.languageService.getFormattingEditsForDocument(
@@ -70,7 +75,15 @@ export class FormattingService implements IFormattingService {
       ).transformed[0] as ts.SourceFile;
     }
 
-    return this.applyChanges(this.printer.printFile(this.sourceFile), changes);
+    const text = this.applyChanges(this.printer.printFile(this.sourceFile), changes);
+    // clean source of new line placeholders
+    return text.replace(
+      new RegExp(
+        `(\r?\n)\\s*?${Util.escapeRegExp(NEW_LINE_PLACEHOLDER)}(\r?\n)`,
+        "g"
+      ),
+      `$1$2`
+    );
   }
 
   /**
