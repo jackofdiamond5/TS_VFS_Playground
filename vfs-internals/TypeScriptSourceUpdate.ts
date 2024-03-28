@@ -18,20 +18,42 @@ export interface IFormatSettings extends ts.FormatCodeSettings {
   singleQuotes?: boolean;
 }
 
-export class FormattingService {
+export interface IFormattingService {
+  sourceFile: ts.SourceFile;
+  applyFormatting(): string;
+}
+
+export class FormattingService implements IFormattingService {
+  private _printer: ts.Printer | undefined;
+  private _defaultFormatSettings: IFormatSettings = {
+    indentSize: 3,
+    tabSize: 4,
+    newLineCharacter: ts.sys.newLine,
+    convertTabsToSpaces: true,
+    indentStyle: ts.IndentStyle.Smart,
+    insertSpaceAfterCommaDelimiter: true,
+    insertSpaceAfterSemicolonInForStatements: true,
+    insertSpaceBeforeAndAfterBinaryOperators: true,
+    insertSpaceAfterKeywordsInControlFlowStatements: true,
+    insertSpaceAfterTypeAssertion: true,
+    singleQuotes: true,
+  };
+
   /**
    * Create a new formatting service for the given source file.
    * @param sourceFile The source file to format.
    * @param printer The printer instance to use to print the source file.
    */
   constructor(
-    private sourceFile: ts.SourceFile,
-    private readonly printer: ts.Printer,
-    private formatOptions: IFormatSettings,
-    private readonly compilerOptions: ts.CompilerOptions
+    public sourceFile: ts.SourceFile,
+    private readonly formatSettings?: IFormatSettings,
+    private readonly printerOptions?: ts.PrinterOptions,
+    private readonly compilerOptions?: ts.CompilerOptions
   ) {}
 
   public applyFormatting(): string {
+    // TODO: use App.container in the CLI to read the settings from FS
+
     // TODO: add logic to read format settings from .editorconfig or eslint config files
     // and modify the formatOptions accordingly
 
@@ -49,6 +71,24 @@ export class FormattingService {
     }
 
     return this.applyChanges(this.printer.printFile(this.sourceFile), changes);
+  }
+
+  /**
+   * The format options to use when printing the source file.
+   */
+  public get formatOptions(): IFormatSettings {
+    return Object.assign({}, this._defaultFormatSettings, this.formatSettings);
+  }
+
+  /**
+   * The printer instance to use to print the source file after modifications.
+   */
+  public get printer(): ts.Printer {
+    if (!this._printer) {
+      this._printer = ts.createPrinter(this.printerOptions);
+    }
+
+    return this._printer;
   }
 
   /**
@@ -139,29 +179,14 @@ export class FormattingService {
 }
 
 export class TypeScriptSourceUpdate {
-  private _defaultFormatSettings: IFormatSettings = {
-    indentSize: 3,
-    tabSize: 4,
-    newLineCharacter: ts.sys.newLine,
-    convertTabsToSpaces: true,
-    indentStyle: ts.IndentStyle.Smart,
-    insertSpaceAfterCommaDelimiter: true,
-    insertSpaceAfterSemicolonInForStatements: true,
-    insertSpaceBeforeAndAfterBinaryOperators: true,
-    insertSpaceAfterKeywordsInControlFlowStatements: true,
-    insertSpaceAfterTypeAssertion: true,
-    singleQuotes: true,
-  };
-
+  private _printer: ts.Printer | undefined;
   private _defaultCompilerOptions: ts.CompilerOptions = {
     pretty: true,
   };
 
-  private _printer: ts.Printer | undefined;
-
   constructor(
     private sourceFile: ts.SourceFile,
-    private readonly formatSettings?: IFormatSettings,
+    private readonly formatter?: IFormattingService,
     private readonly printerOptions?: ts.PrinterOptions,
     private readonly customCompilerOptions?: ts.CompilerOptions
   ) {}
@@ -175,13 +200,6 @@ export class TypeScriptSourceUpdate {
     }
 
     return this._printer;
-  }
-
-  /**
-   * The format options to use when printing the source file.
-   */
-  public get formatOptions(): IFormatSettings {
-    return Object.assign({}, this._defaultFormatSettings, this.formatSettings);
   }
 
   /**
@@ -490,13 +508,12 @@ export class TypeScriptSourceUpdate {
    * Finalize the source file and return the formatted content.
    */
   public finalize(): string {
-    const formatter = new FormattingService(
-      this.sourceFile,
-      this.printer,
-      this.formatOptions,
-      this.compilerOptions
-    );
-    return formatter.applyFormatting();
+    if (this.formatter) {
+      this.formatter.sourceFile = this.sourceFile;
+      return this.formatter.applyFormatting();
+    }
+
+    return this.printer.printFile(this.sourceFile);
   }
 
   /**
