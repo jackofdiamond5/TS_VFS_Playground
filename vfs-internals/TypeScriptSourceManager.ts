@@ -8,6 +8,7 @@ import {
     createVirtualLanguageServiceHost
 } from "@typescript/vfs";
 import { ISourceManager } from "../types";
+import { NEW_LINE_PLACEHOLDER } from "../global-constants";
 
 export class TypeScriptSourceManager implements ISourceManager {
     constructor(
@@ -38,6 +39,10 @@ export class TypeScriptSourceManager implements ISourceManager {
     }
 
     public getSourceFile(filePath: string, content: string): ts.SourceFile | undefined {
+        content = content.replace(
+            /(\r?\n)(\r?\n)/g,
+            `$1${NEW_LINE_PLACEHOLDER}$2`
+          );
         return ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
     }
 
