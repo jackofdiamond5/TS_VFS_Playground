@@ -41,6 +41,11 @@ export class TypeScriptSourceManager implements ISourceManager {
         return ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
     }
 
+    // TODO: use the TypeScriptSourceUpdate class to update the source file and apply the changes in the VFS
+    public updateSourceFile(sourceFile: ts.SourceFile, newContent: string) {
+        ts.updateSourceFile(sourceFile, newContent, { newLength: newContent.length, span: { start: 0, length: newContent.length } },);
+    }
+
     public getSourceString(sourceFile: ts.SourceFile, options?: ts.PrinterOptions, handlers?: ts.PrintHandlers): string {
         const printer = ts.createPrinter(options, handlers);
         return printer.printFile(sourceFile);
