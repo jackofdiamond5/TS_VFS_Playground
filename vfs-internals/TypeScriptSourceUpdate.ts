@@ -45,6 +45,17 @@ export class FormattingService implements IFormattingService {
   };
 
   /**
+   * The printer instance to use to get the source code from the AST.
+   */
+  private get printer(): ts.Printer {
+    if (!this._printer) {
+      this._printer = ts.createPrinter(this.printerOptions);
+    }
+
+    return this._printer;
+  }
+
+  /**
    * Create a new formatting service for the given source file.
    * @param sourceFile The source file to format.
    * @param printer The printer instance to use to print the source file.
@@ -75,7 +86,10 @@ export class FormattingService implements IFormattingService {
       ).transformed[0] as ts.SourceFile;
     }
 
-    const text = this.applyChanges(this.printer.printFile(this.sourceFile), changes);
+    const text = this.applyChanges(
+      this.printer.printFile(this.sourceFile),
+      changes
+    );
     // clean source of new line placeholders
     return text.replace(
       new RegExp(
@@ -96,17 +110,6 @@ export class FormattingService implements IFormattingService {
       this._formatSettingsFromConfig,
       this.formatSettings
     );
-  }
-
-  /**
-   * The printer instance to use to print the source file after modifications.
-   */
-  public get printer(): ts.Printer {
-    if (!this._printer) {
-      this._printer = ts.createPrinter(this.printerOptions);
-    }
-
-    return this._printer;
   }
 
   /**
@@ -261,23 +264,23 @@ export class TypeScriptSourceUpdate {
     pretty: true,
   };
 
-  constructor(
-    private sourceFile: ts.SourceFile,
-    private readonly formatter?: IFormattingService,
-    private readonly printerOptions?: ts.PrinterOptions,
-    private readonly customCompilerOptions?: ts.CompilerOptions
-  ) {}
-
   /**
    * The printer instance to use to print the source file after modifications.
    */
-  public get printer(): ts.Printer {
+  private get printer(): ts.Printer {
     if (!this._printer) {
       this._printer = ts.createPrinter(this.printerOptions);
     }
 
     return this._printer;
   }
+
+  constructor(
+    private sourceFile: ts.SourceFile,
+    private readonly formatter?: IFormattingService,
+    private readonly printerOptions?: ts.PrinterOptions,
+    private readonly customCompilerOptions?: ts.CompilerOptions
+  ) {}
 
   /**
    * The compiler options to use when transforming the source file.
@@ -631,7 +634,7 @@ export class TypeScriptSourceUpdate {
    * Recreate the source file from the AST to make sure any added nodes have `pos` and `end` set.
    * @returns The recreated source file with updated positions for dynamically added nodes.
    */
-  private flush(): ts.SourceFile {
+  public flush(): ts.SourceFile {
     const content = this.printer.printFile(this.sourceFile);
     return (this.sourceFile = ts.createSourceFile(
       this.sourceFile.fileName,
