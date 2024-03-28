@@ -208,10 +208,12 @@ export class FormattingService implements IFormattingService {
         options["indent_style"] === "space";
       if (options["indent_size"]) {
         this._formatSettingsFromConfig.indentSize =
-          parseInt(options["indent_size"], 10) || this._formatSettingsFromConfig.indentSize;
+          parseInt(options["indent_size"], 10) ||
+          this._formatSettingsFromConfig.indentSize;
       }
       if (options["quote_type"]) {
-        this._formatSettingsFromConfig.singleQuotes = options["quote_type"] === "single";
+        this._formatSettingsFromConfig.singleQuotes =
+          options["quote_type"] === "single";
       }
     }
     const tsLintPath = path.posix.join(this.cwd, "tslint.json");
@@ -223,7 +225,10 @@ export class FormattingService implements IFormattingService {
         this._formatSettingsFromConfig.convertTabsToSpaces =
           options.rules.indent[1] === "spaces";
         if (options.rules.indent[2]) {
-          this._formatSettingsFromConfig.indentSize = parseInt(options.rules.indent[2], 10);
+          this._formatSettingsFromConfig.indentSize = parseInt(
+            options.rules.indent[2],
+            10
+          );
         }
       }
       if (
@@ -419,8 +424,7 @@ export class TypeScriptSourceUpdate {
    * @param visitCondition The condition by which the object literal expression is found.
    * @param targetMember The member that will be updated. The value should be the new value to set.
    * @returns The mutated AST.
-   * @remarks This method will not update nodes that were inserted through the compiler API.
-   * And the `visitCondition` should ignore nodes that have `pos` & `end` less than 0.
+   * @remarks This method will not update nodes that were inserted through the compiler API unless the source file is recreated, see {@link flush}.
    */
   public updateObjectLiteralMember(
     visitCondition: (node: ts.Node) => boolean,
