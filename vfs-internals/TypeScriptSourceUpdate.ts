@@ -205,6 +205,7 @@ export class TypeScriptSourceUpdate {
     name: string,
     type: string
   ): ts.VariableDeclaration | undefined {
+    this.flush();
     let declaration;
     ts.forEachChild(this.sourceFile, (node) => {
       if (
@@ -284,11 +285,12 @@ export class TypeScriptSourceUpdate {
       };
     };
 
-    return (this.sourceFile = ts.transform(
+    this.sourceFile = ts.transform(
       this.sourceFile,
       [transformer],
       this.compilerOptions
-    ).transformed[0] as ts.SourceFile);
+    ).transformed[0] as ts.SourceFile;
+    return this.flush();
   }
 
   /**
@@ -326,17 +328,18 @@ export class TypeScriptSourceUpdate {
       };
     };
 
-    return (this.sourceFile = ts.transform(
+    this.sourceFile = ts.transform(
       this.sourceFile,
       [transformer],
       this.compilerOptions
-    ).transformed[0] as ts.SourceFile);
+    ).transformed[0] as ts.SourceFile;
+    return this.flush();
   }
 
   /**
    * Update the value of a member in an object literal expression.
    * @param visitCondition The condition by which the object literal expression is found.
-   * @param targetMember The member that will be updated. The value should be new value to set.
+   * @param targetMember The member that will be updated. The value should be the new value to set.
    * @returns The mutated AST.
    * @remarks This method will not update nodes that were inserted through the compiler API.
    * And the `visitCondition` should ignore nodes that have `pos` & `end` less than 0.
@@ -358,7 +361,7 @@ export class TypeScriptSourceUpdate {
                 (property.pos < 0 || property.end < 0)
               ) {
                 // nodes inserted through the compiler API will have pos & end < 0
-                // we cannot update them until the source file is read anew and the nodes are re-created
+                // we cannot update them until the source file is flushed (read anew and the nodes are re-created)
                 // since pos & end are set during initial parsing and are readonly
                 return property;
               }
@@ -386,11 +389,12 @@ export class TypeScriptSourceUpdate {
       };
     };
 
-    return (this.sourceFile = ts.transform(
+    this.sourceFile = ts.transform(
       this.sourceFile,
       [transformer],
       this.compilerOptions
-    ).transformed[0] as ts.SourceFile);
+    ).transformed[0] as ts.SourceFile;
+    return this.flush();
   }
 
   /**
@@ -493,5 +497,19 @@ export class TypeScriptSourceUpdate {
       this.compilerOptions
     );
     return formatter.applyFormatting();
+  }
+
+  /**
+   * Recreate the source file from the AST to make sure any added nodes have `pos` and `end` set.
+   * @returns The recreated source file with updated positions for dynamically added nodes.
+   */
+  private flush(): ts.SourceFile {
+    const content = this.printer.printFile(this.sourceFile);
+    return (this.sourceFile = ts.createSourceFile(
+      this.sourceFile.fileName,
+      content,
+      ts.ScriptTarget.Latest,
+      true
+    ));
   }
 }
