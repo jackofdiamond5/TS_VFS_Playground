@@ -1,4 +1,6 @@
 import ts from "typescript";
+import * as fs from "fs";
+import * as path from "path";
 
 export interface IImport {
   from: string;
@@ -23,6 +25,20 @@ export interface IFormattingService {
   applyFormatting(): string;
 }
 
+// add to editorconfig.d.ts or just use the interface?
+// declare namespace EditorConfig {
+type IndentStyle = "tab" | "space";
+type Charset = "utf-8" | "latin1" | "windows-1252";
+type QuoteType = "single" | "double";
+
+interface Config {
+  indent_style?: IndentStyle;
+  indent_size?: number;
+  charset?: Charset;
+  quote_type?: QuoteType;
+}
+// }
+
 export class FormattingService implements IFormattingService {
   private _printer: ts.Printer | undefined;
   private _defaultFormatSettings: IFormatSettings = {
@@ -39,6 +55,8 @@ export class FormattingService implements IFormattingService {
     singleQuotes: true,
   };
 
+  private _formatSettingsFromConfig: IFormatSettings = {};
+
   /**
    * Create a new formatting service for the given source file.
    * @param sourceFile The source file to format.
@@ -46,17 +64,14 @@ export class FormattingService implements IFormattingService {
    */
   constructor(
     public sourceFile: ts.SourceFile,
+    private readonly cwd?: string,
     private readonly formatSettings?: IFormatSettings,
     private readonly printerOptions?: ts.PrinterOptions,
     private readonly compilerOptions?: ts.CompilerOptions
   ) {}
 
   public applyFormatting(): string {
-    // TODO: use App.container in the CLI to read the settings from FS
-
-    // TODO: add logic to read format settings from .editorconfig or eslint config files
-    // and modify the formatOptions accordingly
-
+    this.readFormatConfigs();
     const changes = this.languageService.getFormattingEditsForDocument(
       this.sourceFile.fileName,
       this.formatOptions
@@ -77,7 +92,12 @@ export class FormattingService implements IFormattingService {
    * The format options to use when printing the source file.
    */
   public get formatOptions(): IFormatSettings {
-    return Object.assign({}, this._defaultFormatSettings, this.formatSettings);
+    return Object.assign(
+      {},
+      this._defaultFormatSettings,
+      this._formatSettingsFromConfig,
+      this.formatSettings
+    );
   }
 
   /**
@@ -175,6 +195,60 @@ export class FormattingService implements IFormattingService {
     }
 
     return result;
+  }
+
+  /**  Try and parse formatting from project `.editorconfig` / `tslint.json` */
+  private readFormatConfigs() {
+    if (!this.cwd) return;
+
+    const editorConfigPath = path.posix.join(this.cwd, ".editorconfig");
+    // TODO: use App.container in the CLI to read the settings from FS
+    if (fs.existsSync(editorConfigPath)) {
+      // very basic parsing support
+      const text = fs.readFileSync(editorConfigPath, "utf-8");
+      const options = text
+        .replace(/\s*[#;].*([\r\n])/g, "$1") //remove comments
+        .replace(/\[(?!\*\]|\*.ts).+\][^\[]+/g, "") // leave [*]/[*.ts] sections
+        .split(/\r\n|\r|\n/)
+        .reduce((obj: any, x) => {
+          if (x.indexOf("=") !== -1) {
+            const pair = x.split("=");
+            obj[pair[0].trim()] = pair[1].trim();
+          }
+          return obj;
+        }, {});
+
+      this._formatSettingsFromConfig.convertTabsToSpaces =
+        options["indent_style"] === "space";
+      if (options["indent_size"]) {
+        this._formatSettingsFromConfig.indentSize =
+          parseInt(options["indent_size"], 10) || this._formatSettingsFromConfig.indentSize;
+      }
+      if (options["quote_type"]) {
+        this._formatSettingsFromConfig.singleQuotes = options["quote_type"] === "single";
+      }
+    }
+    const tsLintPath = path.posix.join(this.cwd, "tslint.json");
+    if (fs.existsSync(tsLintPath)) {
+      // TODO: eslint?
+      // tslint prio - overrides other settings
+      const options = JSON.parse(fs.readFileSync(tsLintPath, "utf-8"));
+      if (options.rules && options.rules.indent && options.rules.indent[0]) {
+        this._formatSettingsFromConfig.convertTabsToSpaces =
+          options.rules.indent[1] === "spaces";
+        if (options.rules.indent[2]) {
+          this._formatSettingsFromConfig.indentSize = parseInt(options.rules.indent[2], 10);
+        }
+      }
+      if (
+        options.rules &&
+        options.rules.quotemark &&
+        options.rules.quotemark[0]
+      ) {
+        this._formatSettingsFromConfig.singleQuotes =
+          options.rules.quotemark.indexOf("single") !== -1;
+      }
+    }
   }
 }
 
