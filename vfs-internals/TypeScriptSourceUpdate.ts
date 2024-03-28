@@ -25,20 +25,6 @@ export interface IFormattingService {
   applyFormatting(): string;
 }
 
-// add to editorconfig.d.ts or just use the interface?
-// declare namespace EditorConfig {
-type IndentStyle = "tab" | "space";
-type Charset = "utf-8" | "latin1" | "windows-1252";
-type QuoteType = "single" | "double";
-
-interface Config {
-  indent_style?: IndentStyle;
-  indent_size?: number;
-  charset?: Charset;
-  quote_type?: QuoteType;
-}
-// }
-
 export class FormattingService implements IFormattingService {
   private _printer: ts.Printer | undefined;
   private _defaultFormatSettings: IFormatSettings = {
