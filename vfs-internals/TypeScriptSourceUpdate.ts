@@ -27,6 +27,7 @@ export interface IFormattingService {
 
 export class FormattingService implements IFormattingService {
   private _printer: ts.Printer | undefined;
+  private _formatSettingsFromConfig: IFormatSettings = {};
   private _defaultFormatSettings: IFormatSettings = {
     indentSize: 3,
     tabSize: 4,
@@ -40,8 +41,6 @@ export class FormattingService implements IFormattingService {
     insertSpaceAfterTypeAssertion: true,
     singleQuotes: true,
   };
-
-  private _formatSettingsFromConfig: IFormatSettings = {};
 
   /**
    * Create a new formatting service for the given source file.
@@ -530,13 +529,46 @@ export class TypeScriptSourceUpdate {
     );
   }
 
-  public updateClassDecorator(
-    className: string,
-    decoratorName: string,
-    args: ts.Expression[]
-  ) {
-    // should update the decorator of a class
-    throw new Error("Method not implemented.");
+  /**
+   * Creates a `ts.Expression` for an identifier with optional method call.
+   * @param x Identifier text.
+   * @param call Method to call, creating `x.call()`.
+   * @param typeArgs Type arguments for the call, translates to type arguments for generic methods `myMethod<T>`.
+   * @param args Arguments for the call, translates to arguments for the method `myMethod(arg1, arg2)`.
+   * @remarks Create `typeArgs` with methods like `ts.factory.createXXXTypeNode`.
+   *
+   * ```
+   * const typeArg = ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword);
+   * const arg = ts.factory.createNumericLiteral('5');
+   * const callExpression = update.createIdentifier(
+   *    'x',
+   *    'myGenericFunction',
+   *    [typeArg],
+   *    [arg]
+   * );
+   *
+   * // This would create the function call
+   * x.myGenericFunction<number>(5)
+   * ```
+   */
+  public createIdentifier(
+    x: string,
+    call?: string,
+    typeArgs?: ts.TypeNode[],
+    args?: ts.Expression[]
+  ): ts.Identifier | ts.CallExpression {
+    if (call) {
+      return ts.factory.createCallExpression(
+        ts.factory.createPropertyAccessExpression(
+          ts.factory.createIdentifier(x),
+          call
+        ),
+        typeArgs,
+        args
+      );
+    }
+
+    return ts.factory.createIdentifier(x);
   }
 
   public createInlineImportStatementArrowFunction(
