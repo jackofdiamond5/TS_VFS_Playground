@@ -505,7 +505,9 @@ export class TypeScriptSourceUpdate {
   }
 
   /**
-   * Finalize the source file and return the formatted content.
+   * Parse the AST and return the resulting source code.
+   * @remarks This method should be called after all modifications have been made to the AST.
+   * If a formatter is provided, it will be used to format the source code.
    */
   public finalize(): string {
     if (this.formatter) {
