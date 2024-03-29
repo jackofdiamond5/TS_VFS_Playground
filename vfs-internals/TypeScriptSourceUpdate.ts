@@ -13,6 +13,11 @@ export interface IImport {
   imports?: string[];
 }
 
+export interface IImportsMeta {
+  lastIndex: number;
+  modulePaths: string[];
+}
+
 export interface IPropertyAssignment {
   name: string;
   value: ts.Expression;
@@ -58,7 +63,10 @@ export class FormattingService implements IFormattingService {
   /**
    * Create a new formatting service for the given source file.
    * @param sourceFile The source file to format.
-   * @param printer The printer instance to use to print the source file.
+   * @param cwd The current working directory to use when reading formatting settings.
+   * @param formatSettings Custom formatting settings to apply.
+   * @param printerOptions Options to use when printing the source file.
+   * @param compilerOptions Compiler options to use when transforming the source file.
    */
   constructor(
     public sourceFile: ts.SourceFile,
@@ -160,7 +168,6 @@ export class FormattingService implements IFormattingService {
 
   /**
    * Transform string literals to use single quotes.
-   * @returns The mutated node.
    */
   private convertQuotesTransformer =
     <T extends ts.Node>(context: ts.TransformationContext) =>
@@ -198,7 +205,9 @@ export class FormattingService implements IFormattingService {
     return result;
   }
 
-  /**  Try and parse formatting from project `.editorconfig` / `tslint.json` */
+  /**
+   * Try and parse formatting from project `.editorconfig` / `tslint.json`
+   */
   private readFormatConfigs() {
     if (!this.cwd) return;
 
@@ -260,6 +269,8 @@ export class FormattingService implements IFormattingService {
 
 export class TypeScriptSourceUpdate {
   private _printer: ts.Printer | undefined;
+  private _requestedImports: IImport[] = [];
+  private _importsMeta!: IImportsMeta;
   private _defaultCompilerOptions: ts.CompilerOptions = {
     pretty: true,
   };
@@ -275,12 +286,21 @@ export class TypeScriptSourceUpdate {
     return this._printer;
   }
 
+  /**
+   * Create a new source update instance for the given source file.
+   * @param sourceFile The source file to update.
+   * @param formatter The formatting service to use when printing the source file.
+   * @param printerOptions Options to use when printing the source file.
+   * @param customCompilerOptions Custom compiler options to use when transforming the source file.
+   */
   constructor(
     private sourceFile: ts.SourceFile,
     private readonly formatter?: IFormattingService,
     private readonly printerOptions?: ts.PrinterOptions,
     private readonly customCompilerOptions?: ts.CompilerOptions
-  ) {}
+  ) {
+    this.reset();
+  }
 
   /**
    * The compiler options to use when transforming the source file.
@@ -587,33 +607,67 @@ export class TypeScriptSourceUpdate {
     return ts.factory.createIdentifier(x);
   }
 
-  public createInlineImportStatementArrowFunction(
-    importPath: string,
-    importName: string,
-    parameters: ts.ParameterDeclaration[],
-    body: ts.Block
-  ) {
-    // should create an import statement with an arrow function and add it to the source file
-    throw new Error("Method not implemented.");
+  /**
+   * Creates a node for a named import.
+   * @param identifierNames Names of the identifiers (class, variable).
+   * @param importPath Path to import from.
+   * @returns A named import declaration of the form `import { MyClass } from "my-module"`.
+   */
+  public createNamedImportDeclaration(
+    identifierNames: string[],
+    importPath: string
+  ): ts.ImportDeclaration {
+    const namedImport = ts.factory.createNamedImports(
+      identifierNames.map((name) =>
+        ts.factory.createImportSpecifier(
+          false, // is type only
+          undefined, // property name
+          ts.factory.createIdentifier(name)
+        )
+      )
+    );
+    const importClause = ts.factory.createImportClause(
+      false, // is type only
+      undefined, // name
+      namedImport
+    );
+    const importDeclaration = ts.factory.createImportDeclaration(
+      undefined, // modifiers
+      importClause,
+      ts.factory.createStringLiteral(importPath) // module specifier
+    );
+
+    return importDeclaration;
   }
 
-  // consider simpler params
-  public createMemberAccessArrowFunction(
-    memberName: string,
-    parameters: ts.ParameterDeclaration[],
-    body: ts.Block
-  ) {
-    throw new Error("Method not implemented.");
+  /**
+   * Add named imports from a path/package.
+   * @param identifiers Strings to create named import from ("Module" => `import { Module }`)
+   * @param modulePath Module specifier - can be path to file or npm package, etc
+   */
+  public requestImport(identifiers: string[], modulePath: string) {
+    const existing = this._requestedImports.find((x) => x.from === modulePath);
+    if (!existing) {
+      // new imports, check if already exists in file
+      this._requestedImports.push({
+        from: modulePath,
+        imports: identifiers,
+        edit: this._importsMeta.modulePaths.indexOf(modulePath) !== -1,
+      });
+    } else {
+      const newNamedImports = identifiers.filter(
+        (x) => existing.imports?.indexOf(x) === -1
+      );
+      existing.imports?.push(...newNamedImports);
+    }
   }
 
-  public addImportDeclaration(importDeclaration: ts.ImportDeclaration) {
-    throw new Error("Method not implemented.");
-  }
-  // or
-  public addImport(importStatement: IImport) {
-    // TODO
-    // should be able to add aliased imports
-    // multiple imports from the same source should be joined into one
+  /**
+   * Reset the source update instance to its initial state.
+   */
+  public reset() {
+    this._requestedImports = [];
+    this._importsMeta = this.loadImportsMeta();
   }
 
   /**
@@ -622,6 +676,11 @@ export class TypeScriptSourceUpdate {
    * If a formatter is provided, it will be used to format the source code.
    */
   public finalize(): string {
+    this.addNewImports();
+
+    // we already have the source file at its final state
+    // se can safely reset the state of the source update instance
+    this.reset();
     if (this.formatter) {
       this.formatter.sourceFile = this.sourceFile;
       return this.formatter.applyFormatting();
@@ -642,5 +701,56 @@ export class TypeScriptSourceUpdate {
       ts.ScriptTarget.Latest,
       true
     ));
+  }
+
+  /**
+   * Load the imports meta data from the source file.
+   */
+  private loadImportsMeta() {
+    const meta: IImportsMeta = { lastIndex: 0, modulePaths: [] };
+    for (let i = 0; i < this.sourceFile.statements.length; i++) {
+      const statement = this.sourceFile.statements[i];
+      switch (statement.kind) {
+        case ts.SyntaxKind.ImportDeclaration:
+          if (!ts.isImportDeclaration(statement)) continue;
+          if (
+            statement.importClause &&
+            ts.isNamespaceImport(statement.importClause)
+          ) {
+            // don't add imports without named (e.g. `import $ from "JQuery"` or `import "./my-module.js";`)
+            // don't add namespace imports (`import * as fs`) as available for editing, maybe in the future
+            meta.modulePaths.push(statement.moduleSpecifier.getText());
+          }
+
+        // don't add equals imports (`import url = require("url")`) as available for editing, maybe in the future
+        case ts.SyntaxKind.ImportEqualsDeclaration:
+          meta.lastIndex = i + 1;
+          break;
+      }
+    }
+
+    return meta;
+  }
+
+  /** Add `import` statements not previously found in the file  */
+  private addNewImports(): ts.SourceFile {
+    const newImports = this._requestedImports.filter((x) => !x.edit);
+    if (!newImports.length) {
+      return this.sourceFile;
+    }
+
+    const newStatements = ts.factory.createNodeArray([
+      ...this.sourceFile.statements.slice(0, this._importsMeta.lastIndex),
+      ...newImports.map((x) =>
+        this.createNamedImportDeclaration(x.imports!, x.from)
+      ),
+      ...this.sourceFile.statements.slice(this._importsMeta.lastIndex),
+    ]);
+
+    this.sourceFile = ts.factory.updateSourceFile(
+      this.sourceFile,
+      newStatements
+    );
+    return this.flush();
   }
 }
