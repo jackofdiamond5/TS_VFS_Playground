@@ -2,7 +2,7 @@ import Jasmine = require("jasmine");
 import { DisplayProcessor, SpecReporter } from "jasmine-spec-reporter";
 
 class CustomProcessor extends DisplayProcessor {
-	public displayJasmineStarted(info: jasmine.SuiteInfo, log: string): string {
+	public displayJasmineStarted(info: jasmine.JasmineStartedInfo, log: string): string {
 		return `TypeScript ${log}, specs: ${info.totalSpecsDefined}`;
 	}
 }

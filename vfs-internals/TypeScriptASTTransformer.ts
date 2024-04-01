@@ -67,6 +67,7 @@ export class FormattingService implements IFormattingService {
    */
   constructor(
     public sourceFile: ts.SourceFile,
+    // private readonly fileSystem?: IFileSystem, // TODO instead of cwd
     private readonly cwd?: string,
     private readonly formatSettings?: IFormatSettings,
     private readonly printerOptions?: ts.PrinterOptions,
@@ -264,7 +265,7 @@ export class FormattingService implements IFormattingService {
   }
 }
 
-export class TypeScriptSourceUpdate {
+export class TypeScriptASTTransformer {
   private _printer: ts.Printer | undefined;
   private _defaultCompilerOptions: ts.CompilerOptions = {
     pretty: true,
@@ -289,10 +290,10 @@ export class TypeScriptSourceUpdate {
    * @param customCompilerOptions Custom compiler options to use when transforming the source file.
    */
   constructor(
-    private sourceFile: ts.SourceFile,
-    private readonly formatter?: IFormattingService,
-    private readonly printerOptions?: ts.PrinterOptions,
-    private readonly customCompilerOptions?: ts.CompilerOptions
+    protected sourceFile: ts.SourceFile,
+    protected readonly formatter?: IFormattingService,
+    protected readonly printerOptions?: ts.PrinterOptions,
+    protected readonly customCompilerOptions?: ts.CompilerOptions
   ) {}
 
   /**
@@ -405,49 +406,6 @@ export class TypeScriptSourceUpdate {
   }
 
   /**
-   * Adds a new element to a given array literal expression.
-   * @param visitCondition The condition by which the array literal expression is found.
-   * @param elements The elements that will be added to the array literal.
-   * @param prepend If the elements should be added at the beginning of the array.
-   * @returns The mutated AST.
-   */
-  public addMembersToArrayLiteral(
-    visitCondition: (node: ts.Node) => boolean,
-    elements: ts.Expression[],
-    prepend = false
-  ): ts.SourceFile {
-    const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
-      context: ts.TransformationContext
-    ) => {
-      return (rootNode: T) => {
-        const visitor = (node: ts.Node): ts.VisitResult<ts.Node> => {
-          if (ts.isArrayLiteralExpression(node) && visitCondition(node)) {
-            if (prepend) {
-              return context.factory.updateArrayLiteralExpression(node, [
-                ...elements,
-                ...node.elements,
-              ]);
-            }
-            return context.factory.updateArrayLiteralExpression(node, [
-              ...node.elements,
-              ...elements,
-            ]);
-          }
-          return ts.visitEachChild(node, visitor, context);
-        };
-        return ts.visitNode(rootNode, visitor);
-      };
-    };
-
-    this.sourceFile = ts.transform(
-      this.sourceFile,
-      [transformer],
-      this.compilerOptions
-    ).transformed[0] as ts.SourceFile;
-    return this.flush();
-  }
-
-  /**
    * Update the value of a member in an object literal expression.
    * @param visitCondition The condition by which the object literal expression is found.
    * @param targetMember The member that will be updated. The value should be the new value to set.
@@ -519,6 +477,49 @@ export class TypeScriptSourceUpdate {
     );
 
     return ts.factory.createObjectLiteralExpression(propertyAssignments, true);
+  }
+
+  /**
+   * Adds a new element to a given array literal expression.
+   * @param visitCondition The condition by which the array literal expression is found.
+   * @param elements The elements that will be added to the array literal.
+   * @param prepend If the elements should be added at the beginning of the array.
+   * @returns The mutated AST.
+   */
+  public addMembersToArrayLiteral(
+    visitCondition: (node: ts.Node) => boolean,
+    elements: ts.Expression[],
+    prepend = false
+  ): ts.SourceFile {
+    const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
+      context: ts.TransformationContext
+    ) => {
+      return (rootNode: T) => {
+        const visitor = (node: ts.Node): ts.VisitResult<ts.Node> => {
+          if (ts.isArrayLiteralExpression(node) && visitCondition(node)) {
+            if (prepend) {
+              return context.factory.updateArrayLiteralExpression(node, [
+                ...elements,
+                ...node.elements,
+              ]);
+            }
+            return context.factory.updateArrayLiteralExpression(node, [
+              ...node.elements,
+              ...elements,
+            ]);
+          }
+          return ts.visitEachChild(node, visitor, context);
+        };
+        return ts.visitNode(rootNode, visitor);
+      };
+    };
+
+    this.sourceFile = ts.transform(
+      this.sourceFile,
+      [transformer],
+      this.compilerOptions
+    ).transformed[0] as ts.SourceFile;
+    return this.flush();
   }
 
   /**
@@ -613,6 +614,7 @@ export class TypeScriptSourceUpdate {
     let importClause: ts.ImportClause;
     // isTypeOnly on the import clause is set to false because we don't import types atm
     // might change it later if we need sth like - import type { X } from "module"
+    // TODO: consider adding functionality for namespaced imports of the form - import * as X from "module"
     if (isDefault) {
       importClause = ts.factory.createImportClause(
         false, // is type only
@@ -820,12 +822,23 @@ export class TypeScriptSourceUpdate {
         (existing) => existing.alias && existing.alias === identifier.alias
       );
       const importInfo = allImportedIdentifiers.get(identifier.name);
-
+      const sameModule =
+        importInfo &&
+        Util.trimQuotes(importInfo.moduleName) === Util.trimQuotes(modulePath);
+      const identifierNameCollides =
+        importInfo && importInfo.identifierName === identifier.name;
+      const identifierNameCollidesButDifferentAlias =
+        identifierNameCollides && importInfo.alias !== identifier.alias;
+      const identifierNameCollidesButDIfferentAliasAndModule =
+        identifierNameCollidesButDifferentAlias && !sameModule;
+      const isNewImport = !importInfo || sameModule;
       return (
+        (!identifierNameCollides ||
+          identifierNameCollidesButDifferentAlias ||
+          identifierNameCollidesButDIfferentAliasAndModule) &&
         !aliasCollides &&
-        (!importInfo ||
-          Util.trimQuotes(importInfo.moduleName) ===
-            Util.trimQuotes(modulePath))
+        isNewImport &&
+        !sameModule
       );
     });
   }
