@@ -569,7 +569,7 @@ export class TypeScriptSourceUpdate {
    * ```
    * const typeArg = ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword);
    * const arg = ts.factory.createNumericLiteral('5');
-   * const callExpression = update.createIdentifier(
+   * const callExpression = update.createCallExpression(
    *    'x',
    *    'myGenericFunction',
    *    [typeArg],

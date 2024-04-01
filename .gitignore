@@ -3,4 +3,7 @@
 
 # compiled files
 *.js
-*.map
+
+.nyc_output/**/*
+
+/output/**/*
