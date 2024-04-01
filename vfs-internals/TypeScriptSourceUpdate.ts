@@ -559,7 +559,7 @@ export class TypeScriptSourceUpdate {
   }
 
   /**
-   * Creates a `ts.Expression` for an identifier with optional method call.
+   * Creates a `ts.Expression` for an identifier with a method call.
    * @param x Identifier text.
    * @param call Method to call, creating `x.call()`.
    * @param typeArgs Type arguments for the call, translates to type arguments for generic methods `myMethod<T>`.
@@ -598,16 +598,16 @@ export class TypeScriptSourceUpdate {
 
   /**
    * Creates a node for a named import.
-   * @param identifierNames Names of the identifiers (class, variable).
-   * @param importPath Path to import from.
+   * @param identifiers The identifiers to import.
+   * @param modulePath Path to import from.
    * @param isDefault Whether the import is a default import.
    * @returns A named import declaration of the form `import { MyClass } from "my-module"`.
-   * @remarks If `isDefault` is true, the first element of `identifierNames` will be used and
+   * @remarks If `isDefault` is `true`, the first element of `identifiers` will be used and
    * the import will be a default import of the form `import MyClass from "my-module"`.
    */
   public createImportDeclaration(
     identifiers: IIdentifier[],
-    importPath: string,
+    modulePath: string,
     isDefault: boolean = false
   ): ts.ImportDeclaration {
     let importClause: ts.ImportClause;
@@ -633,14 +633,149 @@ export class TypeScriptSourceUpdate {
     const importDeclaration = ts.factory.createImportDeclaration(
       undefined, // modifiers
       importClause,
-      ts.factory.createStringLiteral(importPath) // module specifier
+      ts.factory.createStringLiteral(modulePath) // module specifier
     );
 
     return importDeclaration;
   }
 
   /**
-   * Gather all imported identifiers from all import declarations.
+   * Adds an import declaration to the source file.
+   * @param identifiers The identifiers to import.
+   * @param modulePath The path to import from.
+   * @param isDefault Whether the import is a default import.
+   * @remarks If `isDefault` is `true`, the first element of `identifiers` will be used and
+   * the import will be a default import of the form `import MyClass from "my-module"`.
+   */
+  public addImportDeclaration(
+    identifiers: IIdentifier[],
+    modulePath: string,
+    isDefault: boolean = false
+  ): ts.SourceFile {
+    const transformer: ts.TransformerFactory<ts.SourceFile> = (
+      context: ts.TransformationContext
+    ) => {
+      return (file) => {
+        let newStatements = [...file.statements];
+        let importDeclarationUpdated = false;
+
+        const allImportedIdentifiers =
+          this.findImportedIdentifiers(newStatements);
+
+        // filter identifiers that have not been imported from a different module or with the same alias
+        const identifiersToImport = this.resolveIdentifiersToImport(
+          identifiers,
+          allImportedIdentifiers,
+          modulePath
+        );
+
+        // loop over the statements to find and update the necessary import declaration
+        for (let i = 0; i < newStatements.length; i++) {
+          const statement = newStatements[i];
+          if (
+            ts.isImportDeclaration(statement) &&
+            Util.trimQuotes(statement.moduleSpecifier.getText()) ===
+              Util.trimQuotes(modulePath)
+          ) {
+            // if there are new identifiers to add to an existing import declaration, update it
+            const namedBindings = statement.importClause?.namedBindings;
+            if (
+              namedBindings &&
+              ts.isNamedImports(namedBindings) &&
+              identifiersToImport.length > 0
+            ) {
+              importDeclarationUpdated = true;
+              const updatedImportSpecifiers: ts.ImportSpecifier[] = [
+                ...namedBindings.elements,
+                ...identifiersToImport.map(
+                  this.createImportSpecifierWithOptionalAlias
+                ),
+              ];
+              const updatedNamedImports: ts.NamedImports =
+                context.factory.updateNamedImports(
+                  namedBindings,
+                  updatedImportSpecifiers
+                );
+              const updatedImportClause: ts.ImportClause =
+                context.factory.updateImportClause(
+                  statement.importClause,
+                  false,
+                  statement.importClause.name,
+                  updatedNamedImports
+                );
+
+              newStatements[i] = context.factory.updateImportDeclaration(
+                statement,
+                statement.modifiers,
+                updatedImportClause,
+                statement.moduleSpecifier,
+                statement.attributes
+              );
+            }
+            // exit the loop after modifying the existing import declaration
+            break;
+          }
+        }
+
+        // if no import declaration was updated and there are identifiers to add,
+        // create a new import declaration with the identifiers
+        if (
+          !importDeclarationUpdated &&
+          identifiers.length > 0 &&
+          identifiersToImport.length > 0
+        ) {
+          const newImportDeclaration = this.createImportDeclaration(
+            identifiers,
+            modulePath,
+            isDefault
+          );
+          newStatements = [
+            ...file.statements.filter(ts.isImportDeclaration),
+            newImportDeclaration,
+            ...file.statements.filter((s) => !ts.isImportDeclaration(s)),
+          ];
+        }
+
+        return ts.factory.updateSourceFile(file, newStatements);
+      };
+    };
+
+    this.sourceFile = ts.transform(this.sourceFile, [
+      transformer,
+    ]).transformed[0];
+    return this.flush();
+  }
+
+  /**
+   * Parses the AST and return the resulting source code.
+   * @remarks This method should be called after all modifications have been made to the AST.
+   * If a formatter is provided, it will be used to format the source code.
+   */
+  public finalize(): string {
+    if (this.formatter) {
+      this.formatter.sourceFile = this.sourceFile;
+      return this.formatter.applyFormatting();
+    }
+
+    return this.printer.printFile(this.sourceFile);
+  }
+
+  /**
+   * Recreates the source file from the AST to make sure any added nodes have `pos` and `end` set.
+   * @returns The recreated source file with updated positions for dynamically added nodes.
+   */
+  public flush(): ts.SourceFile {
+    const content = this.printer.printFile(this.sourceFile);
+    return (this.sourceFile = ts.createSourceFile(
+      this.sourceFile.fileName,
+      content,
+      ts.ScriptTarget.Latest,
+      true
+    ));
+  }
+
+  /**
+   * Gathers all imported identifiers from all import declarations.
    * @param statements The statements to search for import declarations.
    */
   private findImportedIdentifiers(
@@ -669,6 +804,36 @@ export class TypeScriptSourceUpdate {
     return allImportedIdentifiers;
   }
 
+  /**
+   * Resolves the identifiers to import based on the existing imports.
+   * @param identifiers The identifiers to import.
+   * @param allImportedIdentifiers The identifiers that have already been imported.
+   * @param modulePath The path to import from.
+   */
+  private resolveIdentifiersToImport(
+    identifiers: IIdentifier[],
+    allImportedIdentifiers: Map<string, IImport>,
+    modulePath: string
+  ) {
+    return identifiers.filter((identifier) => {
+      const aliasCollides = Array.from(allImportedIdentifiers.values()).some(
+        (existing) => existing.alias && existing.alias === identifier.alias
+      );
+      const importInfo = allImportedIdentifiers.get(identifier.name);
+
+      return (
+        !aliasCollides &&
+        (!importInfo ||
+          Util.trimQuotes(importInfo.moduleName) ===
+            Util.trimQuotes(modulePath))
+      );
+    });
+  }
+
+  /**
+   * Creates an import specifier with an optional alias.
+   * @param identifier The identifier to import.
+   */
   private createImportSpecifierWithOptionalAlias(
     identifier: IIdentifier
   ): ts.ImportSpecifier {
@@ -682,158 +847,5 @@ export class TypeScriptSourceUpdate {
         : undefined,
       ts.factory.createIdentifier(aliasOrName)
     );
-  }
-
-  // TODO: handle aliased imports and make sure we don't have alias collisions
-  // adding identifiers to existing modules does not alias them
-  // there are alias collisions
-  public addImportDeclaration(
-    identifiers: IIdentifier[],
-    modulePath: string,
-    isDefault: boolean = false
-  ): ts.SourceFile {
-    // Create a transformer function
-    const transformer: ts.TransformerFactory<ts.SourceFile> = (context) => {
-      return (file) => {
-        let newStatements = [...file.statements]; // copy of the original statements
-        let moduleImportUpdated = false;
-
-        const allImportedIdentifiers =
-          this.findImportedIdentifiers(newStatements);
-
-        // filter identifiers that have not been imported from a different module or with the same alias
-        const identifiersToImport = identifiers.filter((identifier) => {
-          if (
-            Array.from(allImportedIdentifiers.values()).some(
-              (existing) =>
-                existing.alias && existing.alias === identifier.alias
-            )
-          ) {
-            return false;
-          }
-
-          const importInfo = allImportedIdentifiers.get(identifier.name);
-          return (
-            !importInfo ||
-            (Util.trimQuotes(importInfo.moduleName) ===
-              Util.trimQuotes(modulePath) &&
-              importInfo.alias !== identifier.alias)
-          );
-        });
-
-        // loop over the statements to find and update the necessary import declaration
-        for (let i = 0; i < newStatements.length; i++) {
-          const statement = newStatements[i];
-          if (
-            ts.isImportDeclaration(statement) &&
-            Util.trimQuotes(statement.moduleSpecifier.getText()) ===
-              Util.trimQuotes(modulePath)
-          ) {
-            moduleImportUpdated = true;
-            const namedBindings = statement.importClause?.namedBindings;
-            if (namedBindings && ts.isNamedImports(namedBindings)) {
-              // filter out identifiers that are already imported
-              const newIdentifiersToAdd: IIdentifier[] =
-                identifiersToImport.filter(
-                  (identifier) =>
-                    !namedBindings.elements.some(
-                      (element) =>
-                        element.name.text === identifier.name &&
-                        (!identifier.alias ||
-                          identifier.alias !== element.propertyName!.text)
-                    )
-                );
-
-              // if there are new identifiers to add, update the import declaration
-              if (newIdentifiersToAdd.length > 0) {
-                const updatedImportSpecifiers: ts.ImportSpecifier[] = [
-                  ...namedBindings.elements,
-                  ...newIdentifiersToAdd.map(
-                    this.createImportSpecifierWithOptionalAlias
-                  ),
-                ];
-                const updatedNamedImports: ts.NamedImports =
-                  context.factory.updateNamedImports(
-                    namedBindings,
-                    updatedImportSpecifiers
-                  );
-                const updatedImportClause: ts.ImportClause =
-                  context.factory.updateImportClause(
-                    statement.importClause,
-                    false,
-                    statement.importClause.name,
-                    updatedNamedImports
-                  );
-
-                newStatements[i] = context.factory.updateImportDeclaration(
-                  statement,
-                  statement.modifiers,
-                  updatedImportClause,
-                  statement.moduleSpecifier,
-                  statement.attributes
-                );
-              }
-            }
-            break; // exit the loop after handling the import declaration
-          }
-        }
-
-        // if no import declaration was updated and there are identifiers to add,
-        // create a new import declaration with the identifiers
-        if (
-          !moduleImportUpdated &&
-          identifiers.length > 0 &&
-          identifiersToImport.length > 0
-        ) {
-          const newImportDeclaration = this.createImportDeclaration(
-            identifiers,
-            modulePath,
-            isDefault
-          );
-          newStatements = [
-            ...file.statements.filter(ts.isImportDeclaration),
-            newImportDeclaration,
-            ...file.statements.filter((s) => !ts.isImportDeclaration(s)),
-          ];
-        }
-
-        // Return the updated source file
-        return ts.factory.updateSourceFile(file, newStatements);
-      };
-    };
-
-    // Apply the transformer to the source file
-    this.sourceFile = ts.transform(this.sourceFile, [
-      transformer,
-    ]).transformed[0];
-    return this.flush();
-  }
-
-  /**
-   * Parse the AST and return the resulting source code.
-   * @remarks This method should be called after all modifications have been made to the AST.
-   * If a formatter is provided, it will be used to format the source code.
-   */
-  public finalize(): string {
-    if (this.formatter) {
-      this.formatter.sourceFile = this.sourceFile;
-      return this.formatter.applyFormatting();
-    }
-
-    return this.printer.printFile(this.sourceFile);
-  }
-
-  /**
-   * Recreate the source file from the AST to make sure any added nodes have `pos` and `end` set.
-   * @returns The recreated source file with updated positions for dynamically added nodes.
-   */
-  public flush(): ts.SourceFile {
-    const content = this.printer.printFile(this.sourceFile);
-    return (this.sourceFile = ts.createSourceFile(
-      this.sourceFile.fileName,
-      content,
-      ts.ScriptTarget.Latest,
-      true
-    ));
   }
 }
