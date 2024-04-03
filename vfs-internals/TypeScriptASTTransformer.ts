@@ -790,12 +790,12 @@ export class TypeScriptASTTransformer {
         const namedBindings = statement.importClause?.namedBindings;
         if (namedBindings && ts.isNamedImports(namedBindings)) {
           for (const element of namedBindings.elements) {
-            const identifier = element.propertyName
+            const identifierName = element.propertyName
               ? element.propertyName.text
               : element.name.text;
             const alias = element.propertyName ? element.name.text : undefined;
-            allImportedIdentifiers.set(identifier, {
-              identifierName: identifier,
+            allImportedIdentifiers.set(identifierName, {
+              identifierName,
               moduleName: this.getModuleSpecifierName(
                 statement.moduleSpecifier
               ),
@@ -832,7 +832,7 @@ export class TypeScriptASTTransformer {
         identifierNameCollides && importInfo.alias !== identifier.alias;
       const identifierNameCollidesButDifferentAliasAndModule =
         identifierNameCollidesButDifferentAlias && !sameModule;
-      if (identifierNameCollidesButDifferentAliasAndModule) {
+      if (identifierNameCollidesButDifferentAlias) {
         return true;
       }
       return (
@@ -868,13 +868,14 @@ export class TypeScriptASTTransformer {
    * Get a module specifier's node text representation.
    * @param moduleSpecifier the specifier to get the name of.
    * @remarks This method is used to get the name of a module specifier in an import declaration.
-   *  It should always be a string literal..
+   *  It should always be a string literal.
    */
   private getModuleSpecifierName(moduleSpecifier: ts.Expression): string {
     if (ts.isStringLiteral(moduleSpecifier)) {
       return moduleSpecifier.text;
     }
-    // a module name should always be a string literal, so this should never be reached
-    return "";
+
+    // a module specifier should always be a string literal, so this should never be reached
+    throw new Error("Invalid module specifier.");
   }
 }
