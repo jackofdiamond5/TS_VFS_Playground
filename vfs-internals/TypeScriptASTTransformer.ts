@@ -643,6 +643,22 @@ export class TypeScriptASTTransformer {
   }
 
   /**
+   * Checks if an import declaration's identifier or alias would collide with an existing one.
+   * @param identifier The identifier to check for collisions.
+   */
+  public importDeclarationCollides(identifier: IIdentifier): boolean {
+    const allImportedIdentifiers = this.findImportedIdentifiers([
+      ...this.sourceFile.statements,
+    ]);
+
+    return Array.from(allImportedIdentifiers.values()).some(
+      (importStatement) =>
+        importStatement.identifierName === identifier.name ||
+        importStatement.alias === identifier.alias
+    );
+  }
+
+  /**
    * Adds an import declaration to the source file.
    * @param identifiers The identifiers to import.
    * @param modulePath The path to import from.
@@ -662,16 +678,6 @@ export class TypeScriptASTTransformer {
         let newStatements = [...file.statements];
         let importDeclarationUpdated = false;
 
-        const allImportedIdentifiers =
-          this.findImportedIdentifiers(newStatements);
-
-        // filter identifiers that have not been imported from a different module or with the same alias
-        const identifiersToImport = this.filterIdentifiersToImport(
-          identifiers,
-          allImportedIdentifiers,
-          modulePath
-        );
-
         // loop over the statements to find and update the necessary import declaration
         for (let i = 0; i < newStatements.length; i++) {
           const statement = newStatements[i];
@@ -685,12 +691,12 @@ export class TypeScriptASTTransformer {
             if (
               namedBindings &&
               ts.isNamedImports(namedBindings) &&
-              identifiersToImport.length > 0
+              identifiers.length > 0
             ) {
               importDeclarationUpdated = true;
               const updatedImportSpecifiers: ts.ImportSpecifier[] = [
                 ...namedBindings.elements,
-                ...identifiersToImport.map(
+                ...identifiers.map(
                   this.createImportSpecifierWithOptionalAlias
                 ),
               ];
@@ -725,7 +731,7 @@ export class TypeScriptASTTransformer {
         if (
           !importDeclarationUpdated &&
           identifiers.length > 0 &&
-          identifiersToImport.length > 0
+          identifiers.length > 0
         ) {
           const newImportDeclaration = this.createImportDeclaration(
             identifiers,
@@ -807,42 +813,6 @@ export class TypeScriptASTTransformer {
     }
 
     return allImportedIdentifiers;
-  }
-
-  /**
-   * Resolves the identifiers to import based on the existing imports.
-   * @param identifiers The identifiers to import.
-   * @param allImportedIdentifiers The identifiers that have already been imported.
-   * @param modulePath The path to import from.
-   */
-  private filterIdentifiersToImport(
-    identifiers: IIdentifier[],
-    allImportedIdentifiers: Map<string, IImport>,
-    modulePath: string
-  ) {
-    return identifiers.filter((identifier) => {
-      const aliasCollides = Array.from(allImportedIdentifiers.values()).some(
-        (existing) => existing.alias && existing.alias === identifier.alias
-      );
-      const importInfo = allImportedIdentifiers.get(identifier.name);
-      const sameModule = importInfo && importInfo.moduleName === modulePath;
-      const identifierNameCollides =
-        importInfo && importInfo.identifierName === identifier.name;
-      const identifierNameCollidesButDifferentAlias =
-        identifierNameCollides && importInfo.alias !== identifier.alias;
-      const identifierNameCollidesButDifferentAliasAndModule =
-        identifierNameCollidesButDifferentAlias && !sameModule;
-      if (identifierNameCollidesButDifferentAlias) {
-        return true;
-      }
-      return (
-        (!identifierNameCollides ||
-          identifierNameCollidesButDifferentAlias ||
-          identifierNameCollidesButDifferentAliasAndModule) &&
-        !aliasCollides &&
-        !sameModule
-      );
-    });
   }
 
   /**

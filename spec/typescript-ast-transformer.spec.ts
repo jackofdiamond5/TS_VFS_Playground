@@ -367,7 +367,7 @@ describe("TypeScript source update", () => {
       });
     });
 
-    describe("Adding imports", () => {
+    describe("Adding and verifying imports", () => {
       beforeEach(() => {
         FILE_CONTENT = `import { mock } from "module";`;
         sourceFile = ts.createSourceFile(
@@ -378,150 +378,126 @@ describe("TypeScript source update", () => {
         );
         astTransformer = new TypeScriptASTTransformer(sourceFile);
       });
+      describe("Adding imports", () => {
+        it("should add an import declaration", () => {
+          const updatedSourceFile = astTransformer.addImportDeclaration(
+            [{ name: "AnotherMock" }],
+            "another/module"
+          );
 
-      it("should add an import declaration", () => {
-        const updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "AnotherMock" }],
-          "another/module"
-        );
+          const result = printer.printFile(updatedSourceFile);
+          expect(result).toEqual(
+            `import { mock } from "module";\nimport { AnotherMock } from "another/module";\n`
+          );
+        });
 
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(
-          `import { mock } from "module";\nimport { AnotherMock } from "another/module";\n`
-        );
+        it("should add an import declaration with an alias", () => {
+          const updatedSourceFile = astTransformer.addImportDeclaration(
+            [{ name: "AnotherMock", alias: "anotherMock" }],
+            "another/module"
+          );
+
+          const result = printer.printFile(updatedSourceFile);
+          expect(result).toEqual(
+            `import { mock } from "module";\nimport { AnotherMock as anotherMock } from "another/module";\n`
+          );
+        });
+
+        it("should add an import declaration as a default import", () => {
+          const updatedSourceFile = astTransformer.addImportDeclaration(
+            [{ name: "AnotherMock" }],
+            "another/module",
+            true
+          );
+
+          const result = printer.printFile(updatedSourceFile);
+          expect(result).toEqual(
+            `import { mock } from "module";\nimport AnotherMock from "another/module";\n`
+          );
+        });
+
+        it("should add an import declaration with an existing identifier if it is aliased and is from the same module", () => {
+          const updatedSourceFile = astTransformer.addImportDeclaration(
+            [{ name: "mock", alias: "anotherMock" }],
+            "module"
+          );
+
+          // this is a confusing edge case that results in valid TypeScript as technically no identifier names collide.
+          const result = printer.printFile(updatedSourceFile);
+          expect(result).toEqual(
+            `import { mock, mock as anotherMock } from "module";\n`
+          );
+        });
+
+        it("should add an import declaration with an existing identifier if it is aliased and is from a different module", () => {
+          const updatedSourceFile = astTransformer.addImportDeclaration(
+            [{ name: "mock", alias: "anotherMock" }],
+            "another/module"
+          );
+
+          const result = printer.printFile(updatedSourceFile);
+          expect(result).toEqual(
+            `import { mock } from "module";\nimport { mock as anotherMock } from "another/module";\n`
+          );
+        });
+
+        it("should add identifier to an existing import declaration", () => {
+          const updatedSourceFile = astTransformer.addImportDeclaration(
+            [{ name: "AnotherMock" }],
+            "module"
+          );
+
+          const result = printer.printFile(updatedSourceFile);
+          expect(result).toEqual(
+            `import { mock, AnotherMock } from "module";\n`
+          );
+        });
       });
 
-      it("should add an import declaration with an alias", () => {
-        const updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "AnotherMock", alias: "anotherMock" }],
-          "another/module"
-        );
+      describe("Imports collision detection", () => {
+        it("should detect collisions between existing imports", () => {
+          const identifier = { name: "mock" };
+          expect(astTransformer.importDeclarationCollides(identifier)).toBe(
+            true
+          );
+          let updatedSourceFile = astTransformer.addImportDeclaration(
+            [identifier],
+            "module"
+          );
 
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(
-          `import { mock } from "module";\nimport { AnotherMock as anotherMock } from "another/module";\n`
-        );
-      });
+          const result = printer.printFile(updatedSourceFile);
+          expect(result).toEqual(`import { mock, mock } from "module";\n`);
+        });
 
-      it("should add an import declaration as a default import", () => {
-        const updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "AnotherMock" }],
-          "another/module",
-          true
-        );
+        it("should detect collisions between import declarations with the same alias", () => {
+          let identifier = { name: "newMock", alias: "aliasedMock" };
+          expect(astTransformer.importDeclarationCollides(identifier)).toBe(
+            false
+          );
 
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(
-          `import { mock } from "module";\nimport AnotherMock from "another/module";\n`
-        );
-      });
+          let updatedSourceFile = astTransformer.addImportDeclaration(
+            [identifier],
+            "another/module"
+          );
+          expect(astTransformer.importDeclarationCollides(identifier)).toBe(
+            true
+          );
 
-      it("should not add an import declaration if its identifier already exists", () => {
-        const updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "mock" }],
-          "module1"
-        );
+          identifier = { name: "someMock", alias: "aliasedMock" };
+          expect(astTransformer.importDeclarationCollides(identifier)).toBe(
+            true
+          );
+          updatedSourceFile = astTransformer.addImportDeclaration(
+            [identifier],
+            "yet/another/module"
+          );
 
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(`import { mock } from "module";\n`);
-      });
-
-      it("should not add an import declaration if it already exists", () => {
-        const updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "mock" }],
-          "module"
-        );
-
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(`import { mock } from "module";\n`);
-      });
-
-      it("should add an import declaration with an existing identifier if it is aliased and is from the same module", () => {
-        const updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "mock", alias: "anotherMock" }],
-          "module"
-        );
-
-        // this is a confusing edge case that results in valid TypeScript as technically no identifier names collide.
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(`import { mock, mock as anotherMock } from "module";\n`);
-      });
-
-      it("should add an import declaration with an existing identifier if it is aliased and is from a different module", () => {
-        const updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "mock", alias: "anotherMock" }],
-          "another/module"
-        );
-
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(`import { mock } from "module";\nimport { mock as anotherMock } from "another/module";\n`);
-      });
-
-      it("should not add an import declaration if it already exists with the same alias", () => {
-        let updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "newMock", alias: "aliasedMock" }],
-          "another/module"
-        );
-        updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "someMock", alias: "aliasedMock" }],
-          "yet/another/module"
-        );
-
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(
-          `import { mock } from "module";\nimport { newMock as aliasedMock } from "another/module";\n`
-        );
-      });
-
-      it("should add identifier to an existing import declaration", () => {
-        const updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "AnotherMock" }],
-          "module"
-        );
-
-        const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(`import { mock, AnotherMock } from "module";\n`);
-      });
-
-      it("should handle multiple import declarations", () => {
-        let updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "DefaultAliased", alias: "DA" }], // should drop alias on default import
-          "@my/other-module-d",
-          true
-        );
-        updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "SomeAliased", alias: "AS1" }],
-          "@my/other-module1"
-        );
-        updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "ExistingIdentifierAliased", alias: "AS2" }],
-          "@my/other-module2"
-        );
-        updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "ExistingIdentifierAliased", alias: "AS3" }],
-          "@my/other-module3"
-        );
-        updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "ExistingAliasAliased", alias: "AS3" }],
-          "@my/other-module3"
-        );
-        updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "ExistingAliasDiffModule", alias: "AS3" }],
-          "@my/other-module31"
-        );
-        updatedSourceFile = astTransformer.addImportDeclaration(
-          [{ name: "ExistingModuleAliased", alias: "AS4" }],
-          "@my/other-module2"
-        );
-
-        expect(printer.printFile(updatedSourceFile)).toEqual(
-          `import { mock } from "module";
-import DefaultAliased from "@my/other-module-d";
-import { SomeAliased as AS1 } from "@my/other-module1";
-import { ExistingIdentifierAliased as AS2, ExistingModuleAliased as AS4 } from "@my/other-module2";
-import { ExistingIdentifierAliased as AS3 } from "@my/other-module3";
-`
-        );
+          const result = printer.printFile(updatedSourceFile);
+          expect(result).toEqual(
+            `import { mock } from "module";\nimport { newMock as aliasedMock } from "another/module";\n` +
+              `import { someMock as aliasedMock } from "yet/another/module";\n`
+          );
+        });
       });
     });
   });
