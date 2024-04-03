@@ -829,15 +829,16 @@ export class TypeScriptASTTransformer {
         importInfo && importInfo.identifierName === identifier.name;
       const identifierNameCollidesButDifferentAlias =
         identifierNameCollides && importInfo.alias !== identifier.alias;
-      const identifierNameCollidesButDIfferentAliasAndModule =
+      const identifierNameCollidesButDifferentAliasAndModule =
         identifierNameCollidesButDifferentAlias && !sameModule;
-      const isNewImport = !importInfo || sameModule;
+      if (identifierNameCollidesButDifferentAliasAndModule) {
+        return true;
+      }
       return (
         (!identifierNameCollides ||
           identifierNameCollidesButDifferentAlias ||
-          identifierNameCollidesButDIfferentAliasAndModule) &&
+          identifierNameCollidesButDifferentAliasAndModule) &&
         !aliasCollides &&
-        isNewImport &&
         !sameModule
       );
     });
