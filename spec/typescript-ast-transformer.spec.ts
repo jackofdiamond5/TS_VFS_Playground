@@ -40,6 +40,14 @@ describe("TypeScript source update", () => {
     });
 
     it("should create a call expression", () => {
+      sourceFile = ts.createSourceFile(
+        FILE_NAME,
+        FILE_CONTENT,
+        ts.ScriptTarget.Latest,
+        true
+      );
+      astTransformer = new TypeScriptASTTransformer(sourceFile);
+
       const typeArg = ts.factory.createKeywordTypeNode(
         ts.SyntaxKind.NumberKeyword
       );
@@ -428,20 +436,15 @@ describe("TypeScript source update", () => {
         expect(result).toEqual(`import { mock } from "module";\n`);
       });
 
-      it("should not add an import declaration with an existing identifier if it is aliased and is from the same module", () => {
+      it("should add an import declaration with an existing identifier if it is aliased and is from the same module", () => {
         const updatedSourceFile = astTransformer.addImportDeclaration(
           [{ name: "mock", alias: "anotherMock" }],
           "module"
         );
 
-        /**
-         * Supporting this would mean allowing situations like this to exist:
-         * import { mock, mock as anotherMock } from "module";
-         *
-         * While this is not broken TypeScript, it is not needed and can be confusing.
-         */
+        // this is a confusing edge case that results in valid TypeScript as technically no identifier names collide.
         const result = printer.printFile(updatedSourceFile);
-        expect(result).toEqual(`import { mock } from "module";\n`);
+        expect(result).toEqual(`import { mock, mock as anotherMock } from "module";\n`);
       });
 
       it("should add an import declaration with an existing identifier if it is aliased and is from a different module", () => {
