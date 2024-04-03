@@ -1,8 +1,7 @@
 import ts from "typescript";
-import * as fs from "fs";
-import * as path from "path";
 import { NEW_LINE_PLACEHOLDER } from "../global-constants";
 import { Util } from "./Util";
+import { IFileSystem } from "../types/IFileSystem";
 
 export interface IIdentifier {
   name: string;
@@ -60,15 +59,14 @@ export class FormattingService implements IFormattingService {
   /**
    * Create a new formatting service for the given source file.
    * @param sourceFile The source file to format.
-   * @param cwd The current working directory to use when reading formatting settings.
+   * @param fileSystem The file system to use when reading formatting options.
    * @param formatSettings Custom formatting settings to apply.
    * @param printerOptions Options to use when printing the source file.
    * @param compilerOptions Compiler options to use when transforming the source file.
    */
   constructor(
     public sourceFile: ts.SourceFile,
-    // private readonly fileSystem?: IFileSystem, // TODO instead of cwd
-    private readonly cwd?: string,
+    private readonly fileSystem?: IFileSystem,
     private readonly formatSettings?: IFormatSettings,
     private readonly printerOptions?: ts.PrinterOptions,
     private readonly compilerOptions?: ts.CompilerOptions
@@ -207,13 +205,14 @@ export class FormattingService implements IFormattingService {
    * Try and parse formatting from project `.editorconfig` / `tslint.json`
    */
   private readFormatConfigs() {
-    if (!this.cwd) return;
+    if (!this.fileSystem) return;
 
-    const editorConfigPath = path.posix.join(this.cwd, ".editorconfig");
+    const editorConfigPath = ".editorconfig";
     // TODO: use App.container in the CLI to read the settings from FS
-    if (fs.existsSync(editorConfigPath)) {
+    if (this.fileSystem.fileExists(editorConfigPath)) {
       // very basic parsing support
-      const text = fs.readFileSync(editorConfigPath, "utf-8");
+      const text = this.fileSystem.readFile(editorConfigPath, "utf-8");
+      if (!text) return;
       const options = text
         .replace(/\s*[#;].*([\r\n])/g, "$1") //remove comments
         .replace(/\[(?!\*\]|\*.ts).+\][^\[]+/g, "") // leave [*]/[*.ts] sections
@@ -238,11 +237,13 @@ export class FormattingService implements IFormattingService {
           options["quote_type"] === "single";
       }
     }
-    const tsLintPath = path.posix.join(this.cwd, "tslint.json");
-    if (fs.existsSync(tsLintPath)) {
+    const tsLintPath = "tslint.json";
+    if (this.fileSystem.fileExists(tsLintPath)) {
       // TODO: eslint?
       // tslint prio - overrides other settings
-      const options = JSON.parse(fs.readFileSync(tsLintPath, "utf-8"));
+      const text = this.fileSystem.readFile(tsLintPath, "utf-8");
+      if (!text) return;
+      const options = JSON.parse(text);
       if (options.rules && options.rules.indent && options.rules.indent[0]) {
         this._formatSettingsFromConfig.convertTabsToSpaces =
           options.rules.indent[1] === "spaces";
