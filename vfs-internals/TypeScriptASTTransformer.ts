@@ -202,13 +202,12 @@ export class FormattingService implements IFormattingService {
   }
 
   /**
-   * Try and parse formatting from project `.editorconfig` / `tslint.json`
+   * Try and parse formatting from project `.editorconfig`
    */
   private readFormatConfigs() {
     if (!this.fileSystem) return;
 
     const editorConfigPath = ".editorconfig";
-    // TODO: use App.container in the CLI to read the settings from FS
     if (this.fileSystem.fileExists(editorConfigPath)) {
       // very basic parsing support
       const text = this.fileSystem.readFile(editorConfigPath, "utf-8");
@@ -237,32 +236,7 @@ export class FormattingService implements IFormattingService {
           options["quote_type"] === "single";
       }
     }
-    const tsLintPath = "tslint.json";
-    if (this.fileSystem.fileExists(tsLintPath)) {
-      // TODO: eslint?
-      // tslint prio - overrides other settings
-      const text = this.fileSystem.readFile(tsLintPath, "utf-8");
-      if (!text) return;
-      const options = JSON.parse(text);
-      if (options.rules && options.rules.indent && options.rules.indent[0]) {
-        this._formatSettingsFromConfig.convertTabsToSpaces =
-          options.rules.indent[1] === "spaces";
-        if (options.rules.indent[2]) {
-          this._formatSettingsFromConfig.indentSize = parseInt(
-            options.rules.indent[2],
-            10
-          );
-        }
-      }
-      if (
-        options.rules &&
-        options.rules.quotemark &&
-        options.rules.quotemark[0]
-      ) {
-        this._formatSettingsFromConfig.singleQuotes =
-          options.rules.quotemark.indexOf("single") !== -1;
-      }
-    }
+    // TODO: consider adding eslint support
   }
 }
 
@@ -696,9 +670,7 @@ export class TypeScriptASTTransformer {
               importDeclarationUpdated = true;
               const updatedImportSpecifiers: ts.ImportSpecifier[] = [
                 ...namedBindings.elements,
-                ...identifiers.map(
-                  this.createImportSpecifierWithOptionalAlias
-                ),
+                ...identifiers.map(this.createImportSpecifierWithOptionalAlias),
               ];
               const updatedNamedImports: ts.NamedImports =
                 context.factory.updateNamedImports(
