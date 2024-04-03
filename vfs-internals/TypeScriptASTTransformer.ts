@@ -666,7 +666,7 @@ export class TypeScriptASTTransformer {
           this.findImportedIdentifiers(newStatements);
 
         // filter identifiers that have not been imported from a different module or with the same alias
-        const identifiersToImport = this.resolveIdentifiersToImport(
+        const identifiersToImport = this.filterIdentifiersToImport(
           identifiers,
           allImportedIdentifiers,
           modulePath
@@ -677,8 +677,8 @@ export class TypeScriptASTTransformer {
           const statement = newStatements[i];
           if (
             ts.isImportDeclaration(statement) &&
-            Util.trimQuotes(statement.moduleSpecifier.getText()) ===
-              Util.trimQuotes(modulePath)
+            this.getModuleSpecifierName(statement.moduleSpecifier) ===
+              modulePath
           ) {
             // if there are new identifiers to add to an existing import declaration, update it
             const namedBindings = statement.importClause?.namedBindings;
@@ -796,7 +796,9 @@ export class TypeScriptASTTransformer {
             const alias = element.propertyName ? element.name.text : undefined;
             allImportedIdentifiers.set(identifier, {
               identifierName: identifier,
-              moduleName: statement.moduleSpecifier.getText(),
+              moduleName: this.getModuleSpecifierName(
+                statement.moduleSpecifier
+              ),
               alias,
             });
           }
@@ -813,7 +815,7 @@ export class TypeScriptASTTransformer {
    * @param allImportedIdentifiers The identifiers that have already been imported.
    * @param modulePath The path to import from.
    */
-  private resolveIdentifiersToImport(
+  private filterIdentifiersToImport(
     identifiers: IIdentifier[],
     allImportedIdentifiers: Map<string, IImport>,
     modulePath: string
@@ -823,9 +825,7 @@ export class TypeScriptASTTransformer {
         (existing) => existing.alias && existing.alias === identifier.alias
       );
       const importInfo = allImportedIdentifiers.get(identifier.name);
-      const sameModule =
-        importInfo &&
-        Util.trimQuotes(importInfo.moduleName) === Util.trimQuotes(modulePath);
+      const sameModule = importInfo && importInfo.moduleName === modulePath;
       const identifierNameCollides =
         importInfo && importInfo.identifierName === identifier.name;
       const identifierNameCollidesButDifferentAlias =
@@ -862,5 +862,19 @@ export class TypeScriptASTTransformer {
         : undefined,
       ts.factory.createIdentifier(aliasOrName)
     );
+  }
+
+  /**
+   * Get a module specifier's node text representation.
+   * @param moduleSpecifier the specifier to get the name of.
+   * @remarks This method is used to get the name of a module specifier in an import declaration.
+   *  It should always be a string literal..
+   */
+  private getModuleSpecifierName(moduleSpecifier: ts.Expression): string {
+    if (ts.isStringLiteral(moduleSpecifier)) {
+      return moduleSpecifier.text;
+    }
+    // a module name should always be a string literal, so this should never be reached
+    return "";
   }
 }
