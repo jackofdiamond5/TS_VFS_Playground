@@ -1,5 +1,10 @@
 import ts from "typescript";
-import { IFormattingService, IPropertyAssignment, IImport, IIdentifier } from "../types";
+import {
+  IFormattingService,
+  IPropertyAssignment,
+  IImport,
+  IIdentifier,
+} from "../types";
 
 export class TypeScriptASTTransformer {
   private _printer: ts.Printer | undefined;
@@ -77,6 +82,28 @@ export class TypeScriptASTTransformer {
   }
 
   /**
+   * Traverses the AST up to find a node that satisfies the given condition.
+   * @param node The starting point of the search.
+   * @param condition The condition to satisfy.
+   * @returns The node's ancenstor that satisfies the condition, `undefined` if none is found.
+   */
+  public findNodeAncenstor(
+    node: ts.Node,
+    condition: (node: ts.Node) => boolean
+  ): ts.Node | undefined {
+    if (condition(node)) {
+      return node;
+    }
+
+    if (node.parent) {
+      return this.findNodeAncenstor(node.parent, condition);
+    }
+
+    // no parent node satisfies the condition
+    return undefined;
+  }
+
+  /**
    * Adds a new property assignment to an object literal expression.
    * @param visitCondition The condition by which the object literal expression is found.
    * @param propertyAssignment The property that will be added.
@@ -116,7 +143,9 @@ export class TypeScriptASTTransformer {
       throw new Error("Must provide property value.");
     }
 
-    const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
+    const transformer: ts.TransformerFactory<ts.SourceFile> = <
+      T extends ts.Node
+    >(
       context: ts.TransformationContext
     ) => {
       return (rootNode: T) => {
@@ -129,7 +158,7 @@ export class TypeScriptASTTransformer {
           }
           return ts.visitEachChild(node, visitor, context);
         };
-        return ts.visitNode(rootNode, visitor);
+        return ts.visitNode(rootNode, visitor, ts.isSourceFile);
       };
     };
 
@@ -137,7 +166,7 @@ export class TypeScriptASTTransformer {
       this.sourceFile,
       [transformer],
       this.compilerOptions
-    ).transformed[0] as ts.SourceFile;
+    ).transformed[0];
     return this.flush();
   }
 
@@ -152,7 +181,9 @@ export class TypeScriptASTTransformer {
     visitCondition: (node: ts.Node) => boolean,
     targetMember: IPropertyAssignment
   ): ts.SourceFile {
-    const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
+    const transformer: ts.TransformerFactory<ts.SourceFile> = <
+      T extends ts.Node
+    >(
       context: ts.TransformationContext
     ) => {
       return (rootNode: T) => {
@@ -189,7 +220,7 @@ export class TypeScriptASTTransformer {
           }
           return ts.visitEachChild(node, visitor, context);
         };
-        return ts.visitNode(rootNode, visitor);
+        return ts.visitNode(rootNode, visitor, ts.isSourceFile);
       };
     };
 
@@ -197,7 +228,7 @@ export class TypeScriptASTTransformer {
       this.sourceFile,
       [transformer],
       this.compilerOptions
-    ).transformed[0] as ts.SourceFile;
+    ).transformed[0];
     return this.flush();
   }
 
@@ -227,7 +258,9 @@ export class TypeScriptASTTransformer {
     elements: ts.Expression[],
     prepend = false
   ): ts.SourceFile {
-    const transformer: ts.TransformerFactory<ts.Node> = <T extends ts.Node>(
+    const transformer: ts.TransformerFactory<ts.SourceFile> = <
+      T extends ts.Node
+    >(
       context: ts.TransformationContext
     ) => {
       return (rootNode: T) => {
@@ -246,7 +279,7 @@ export class TypeScriptASTTransformer {
           }
           return ts.visitEachChild(node, visitor, context);
         };
-        return ts.visitNode(rootNode, visitor);
+        return ts.visitNode(rootNode, visitor, ts.isSourceFile);
       };
     };
 
@@ -254,7 +287,7 @@ export class TypeScriptASTTransformer {
       this.sourceFile,
       [transformer],
       this.compilerOptions
-    ).transformed[0] as ts.SourceFile;
+    ).transformed[0];
     return this.flush();
   }
 
@@ -389,7 +422,9 @@ export class TypeScriptASTTransformer {
     return Array.from(allImportedIdentifiers.values()).some(
       (importStatement) =>
         importStatement.identifierName === identifier.name ||
-        importStatement.alias === identifier.alias
+        (importStatement.alias &&
+          identifier.alias &&
+          importStatement.alias === identifier.alias)
     );
   }
 
@@ -489,7 +524,7 @@ export class TypeScriptASTTransformer {
   }
 
   /**
-   * Parses the AST and return the resulting source code.
+   * Parses the AST and returns the resulting source code.
    * @remarks This method should be called after all modifications have been made to the AST.
    * If a formatter is provided, it will be used to format the source code.
    */
