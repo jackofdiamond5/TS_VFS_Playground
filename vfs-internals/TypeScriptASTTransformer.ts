@@ -15,7 +15,7 @@ export class TypeScriptASTTransformer {
   /**
    * The printer instance to use to print the source file after modifications.
    */
-  private get printer(): ts.Printer {
+  protected get printer(): ts.Printer {
     if (!this._printer) {
       this._printer = ts.createPrinter(this.printerOptions);
     }
@@ -46,6 +46,25 @@ export class TypeScriptASTTransformer {
       this._defaultCompilerOptions,
       this.customCompilerOptions
     );
+  }
+
+  /**
+   * Look up a property assignment in the AST.
+   * @param visitCondition The condition by which the property assignment is found.
+   */
+  public findPropertyAssignment(
+    visitCondition: (node: ts.Node) => boolean
+  ): ts.PropertyAssignment | undefined {
+    let propertyAssignment: ts.PropertyAssignment | undefined;
+    const visitor: ts.Visitor = (node) => {
+      if (ts.isPropertyAssignment(node) && visitCondition(node)) {
+        propertyAssignment = node;
+      }
+      return ts.visitEachChild(node, visitor, undefined);
+    };
+
+    ts.visitNode(this.sourceFile, visitor, ts.isPropertyAssignment);
+    return propertyAssignment;
   }
 
   /**
