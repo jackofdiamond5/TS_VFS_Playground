@@ -104,7 +104,7 @@ describe("TypeScript source update", () => {
       );
     });
 
-    it("should update am existing member of an object literal", () => {
+    it("should update an existing member of an object literal", () => {
       const updatedSourceFile = astTransformer.updateObjectLiteralMember(
         ts.isObjectLiteralExpression,
         { name: "key2", value: ts.factory.createStringLiteral("new-value") }

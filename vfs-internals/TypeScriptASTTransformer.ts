@@ -306,7 +306,7 @@ export class TypeScriptASTTransformer {
   ): ts.ArrayLiteralExpression;
   public createArrayLiteralExpression(
     elementsOrProperties: ts.Expression[] | IPropertyAssignment[],
-    multiline = false
+    multiline: boolean = false
   ): ts.ArrayLiteralExpression {
     if (
       elementsOrProperties.every((element) =>
