@@ -58,7 +58,7 @@ export class TypeScriptASTTransformer {
     let propertyAssignment: ts.PropertyAssignment | undefined;
     const visitor: ts.Visitor = (node) => {
       if (ts.isPropertyAssignment(node) && visitCondition(node)) {
-        propertyAssignment = node;
+        return (propertyAssignment = node);
       }
       return ts.visitEachChild(node, visitor, undefined);
     };
@@ -345,6 +345,33 @@ export class TypeScriptASTTransformer {
       propertyAssignments,
       multiline
     );
+  }
+
+  /**
+   * Finds an element in an array literal expression that satisfies the given condition.
+   * @param visitCondition The condition by which the element is found.
+   */
+  public findElementInArrayLiteral(
+    visitCondition: (node: ts.Node) => boolean
+  ): ts.Expression | undefined {
+    let target: ts.Expression | undefined;
+    const visitor: ts.Visitor = (node) => {
+      if (ts.isArrayLiteralExpression(node)) {
+        node.elements.find((element) => {
+          if (visitCondition(element)) {
+            target = element;
+          }
+        });
+        if (target) {
+          return target;
+        }
+      }
+
+      return ts.visitEachChild(node, visitor, undefined);
+    };
+
+    ts.visitNode(this.sourceFile, visitor, ts.isExpression);
+    return target;
   }
 
   /**
