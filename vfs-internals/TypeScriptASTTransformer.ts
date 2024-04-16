@@ -256,13 +256,17 @@ export class TypeScriptASTTransformer {
    * @param properties The properties to add to the object literal.
    */
   public createObjectLiteralExpression(
-    properties: IPropertyAssignment[]
+    properties: IPropertyAssignment[],
+    multiline: boolean = false
   ): ts.ObjectLiteralExpression {
     const propertyAssignments = properties.map((property) =>
       ts.factory.createPropertyAssignment(property.name, property.value)
     );
 
-    return ts.factory.createObjectLiteralExpression(propertyAssignments, true);
+    return ts.factory.createObjectLiteralExpression(
+      propertyAssignments,
+      multiline
+    );
   }
 
   /**
@@ -270,13 +274,44 @@ export class TypeScriptASTTransformer {
    * @param visitCondition The condition by which the array literal expression is found.
    * @param elements The elements that will be added to the array literal.
    * @param prepend If the elements should be added at the beginning of the array.
+   * @anchorElement The element to anchor the new elements to.
    * @returns The mutated AST.
    */
   public addMembersToArrayLiteral(
     visitCondition: (node: ts.Node) => boolean,
     elements: ts.Expression[],
-    prepend = false
+    prepend?: boolean,
+    anchorElement?: ts.Expression | IPropertyAssignment
+  ): ts.SourceFile;
+  /**
+   * Adds a new element to a given array literal expression.
+   * @param visitCondition The condition by which the array literal expression is found.
+   * @param propertyAssignment The elements that will be added to the array literal
+   * @prepend If the elements should be added at the beginning of the array.
+   * @anchorElement The element to anchor the new elements to.
+   */
+  public addMembersToArrayLiteral(
+    visitCondition: (node: ts.Node) => boolean,
+    propertyAssignment: IPropertyAssignment[],
+    prepend?: boolean,
+    anchorElement?: ts.Expression | IPropertyAssignment
+  ): ts.SourceFile;
+  public addMembersToArrayLiteral(
+    visitCondition: (node: ts.Node) => boolean,
+    expressionOrPropertyAssignment: ts.Expression[] | IPropertyAssignment[],
+    prepend: boolean = false,
+    anchorElement?: ts.StringLiteral | ts.NumericLiteral | IPropertyAssignment
   ): ts.SourceFile {
+    let elements: ts.Expression[] | IPropertyAssignment[];
+    if (
+      expressionOrPropertyAssignment.every((e) => ts.isExpression(e as ts.Node))
+    ) {
+      elements = expressionOrPropertyAssignment as ts.Expression[];
+    } else {
+      elements = (expressionOrPropertyAssignment as IPropertyAssignment[]).map(
+        (property) => this.createObjectLiteralExpression([property])
+      );
+    }
     const transformer: ts.TransformerFactory<ts.SourceFile> = <
       T extends ts.Node
     >(
@@ -284,7 +319,51 @@ export class TypeScriptASTTransformer {
     ) => {
       return (rootNode: T) => {
         const visitor = (node: ts.Node): ts.VisitResult<ts.Node> => {
+          let anchor: ts.Expression | undefined;
           if (ts.isArrayLiteralExpression(node) && visitCondition(node)) {
+            if (anchorElement) {
+              anchor = Array.from(node.elements).find((e) => {
+                if (ts.isStringLiteral(e) || ts.isNumericLiteral(e)) {
+                  return (
+                    e.text ===
+                    (anchorElement as ts.StringLiteral | ts.NumericLiteral).text
+                  );
+                } else if (
+                  this.isIPropertyAssignment(anchorElement) &&
+                  ts.isObjectLiteralExpression(e)
+                ) {
+                  return e.properties.some(
+                    (p) =>
+                      ts.isPropertyAssignment(p) &&
+                      p.initializer.getText().includes(anchorElement.name)
+                  );
+                }
+                return false;
+              });
+            }
+
+            let structure!: ts.Expression[];
+            if (anchor) {
+              if (prepend) {
+                structure = node.elements
+                  .slice(0, node.elements.indexOf(anchor))
+                  .concat(elements)
+                  .concat(node.elements.slice(node.elements.indexOf(anchor)));
+              } else {
+                structure = node.elements
+                  .slice(0, node.elements.indexOf(anchor) + 1)
+                  .concat(elements)
+                  .concat(
+                    node.elements.slice(node.elements.indexOf(anchor) + 1)
+                  );
+              }
+
+              return context.factory.updateArrayLiteralExpression(
+                node,
+                structure
+              );
+            }
+
             if (prepend) {
               return context.factory.updateArrayLiteralExpression(node, [
                 ...elements,
@@ -340,7 +419,7 @@ export class TypeScriptASTTransformer {
 
     const propertyAssignments = (
       elementsOrProperties as IPropertyAssignment[]
-    ).map((property) => this.createObjectLiteralExpression([property]));
+    ).map((property) => this.createObjectLiteralExpression([property], multiline));
     return ts.factory.createArrayLiteralExpression(
       propertyAssignments,
       multiline
@@ -595,6 +674,14 @@ export class TypeScriptASTTransformer {
       ts.ScriptTarget.Latest,
       true
     ));
+  }
+
+  /**
+   * Determines if a given object is an instance of `IPropertyAssignment`.
+   * @param target The object to check.
+   */
+  public isIPropertyAssignment(target: object): target is IPropertyAssignment {
+    return target && "name" in target && "value" in target;
   }
 
   /**

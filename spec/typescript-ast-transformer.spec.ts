@@ -4,7 +4,7 @@ import { TypeScriptASTTransformer } from "../vfs-internals/TypeScriptASTTransfor
 const FILE_NAME = "test-file.ts";
 let FILE_CONTENT = ``;
 
-describe("TypeScript source update", () => {
+describe("TypeScript AST Transformer", () => {
   let sourceFile: ts.SourceFile;
   let astTransformer: TypeScriptASTTransformer;
 
@@ -168,9 +168,10 @@ describe("TypeScript source update", () => {
     });
 
     it("should create an object literal expression", () => {
-      const newObjectLiteral = astTransformer.createObjectLiteralExpression([
-        { name: "key3", value: ts.factory.createStringLiteral("new-value") },
-      ]);
+      const newObjectLiteral = astTransformer.createObjectLiteralExpression(
+        [{ name: "key3", value: ts.factory.createStringLiteral("new-value") }],
+        true
+      );
 
       const result = printer.printNode(
         ts.EmitHint.Unspecified,
@@ -216,16 +217,18 @@ describe("TypeScript source update", () => {
     });
 
     it("should create an array literal expression with IPropertyAssignment", () => {
-      const newArrayLiteral = astTransformer.createArrayLiteralExpression([
-        {
-          name: "key3",
-          value: ts.factory.createStringLiteral("new-value"),
-        },
-        {
-          name: "key4",
-          value: ts.factory.createNumericLiteral("5"),
-        },
-      ]);
+      const newArrayLiteral = astTransformer.createArrayLiteralExpression(
+        [
+          {
+            name: "key3",
+            value: ts.factory.createStringLiteral("new-value"),
+          },
+          {
+            name: "key4",
+            value: ts.factory.createNumericLiteral("5"),
+          },
+        ]
+      );
 
       const result = printer.printNode(
         ts.EmitHint.Unspecified,
@@ -234,7 +237,7 @@ describe("TypeScript source update", () => {
       );
 
       expect(result).toEqual(
-        `[{\n        key3: "new-value"\n    }, {\n        key4: 5\n    }]`
+        `[{ key3: "new-value" }, { key4: 5 }]`
       );
     });
 
