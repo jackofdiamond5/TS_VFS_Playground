@@ -32,7 +32,7 @@ export class TypeScriptASTTransformer {
    */
   constructor(
     protected sourceFile: ts.SourceFile,
-    protected readonly formatter?: IFormattingService,
+    protected formatter?: IFormattingService,
     protected readonly printerOptions?: ts.PrinterOptions,
     protected readonly customCompilerOptions?: ts.CompilerOptions
   ) {}
