@@ -66,6 +66,59 @@ describe("TypeScript AST Transformer", () => {
       );
       expect(result).toEqual(`x.myGenericFunction<number>(5)`);
     });
+
+    it("should correctly find a node's ancenstor", () => {
+      FILE_CONTENT = `const myVar: string = "hello";`;
+      sourceFile = ts.createSourceFile(
+        FILE_NAME,
+        FILE_CONTENT,
+        ts.ScriptTarget.Latest,
+        true
+      );
+      astTransformer = new TypeScriptASTTransformer(sourceFile);
+
+      const targetChild = astTransformer
+        .findVariableDeclaration("myVar", "string")
+        ?.getChildAt(4)!;
+      const variableDeclaration = astTransformer.findNodeAncenstor(
+        targetChild,
+        ts.isVariableDeclaration
+      )!;
+
+      expect(ts.isVariableDeclaration(variableDeclaration)).toBeTruthy();
+    });
+
+    it("should find a property assignment in the AST by a given condition", () => {
+      FILE_CONTENT = `const myObj = { key1: "hello", key2: "world" };`;
+      sourceFile = ts.createSourceFile(
+        FILE_NAME,
+        FILE_CONTENT,
+        ts.ScriptTarget.Latest,
+        true
+      );
+      astTransformer = new TypeScriptASTTransformer(sourceFile);
+
+      const result = astTransformer.findPropertyAssignment(
+        (node) =>
+          ts.isPropertyAssignment(node) && node.name.getText() === "key1"
+      );
+      expect(result).toBeDefined();
+    });
+
+    it("should determine correctly if an entity is an IPropertyAssignment", () => {
+      const propertyAssignment = {
+        name: "test",
+        value: ts.factory.createStringLiteral("value"),
+      };
+      expect(
+        astTransformer.isIPropertyAssignment(propertyAssignment)
+      ).toBeTruthy();
+
+      const notPropertyAssignment = { name: "test", value: "value" };
+      expect(
+        astTransformer.isIPropertyAssignment(notPropertyAssignment)
+      ).toBeFalsy();
+    });
   });
 
   describe("Object literals", () => {
@@ -217,18 +270,16 @@ describe("TypeScript AST Transformer", () => {
     });
 
     it("should create an array literal expression with IPropertyAssignment", () => {
-      const newArrayLiteral = astTransformer.createArrayLiteralExpression(
-        [
-          {
-            name: "key3",
-            value: ts.factory.createStringLiteral("new-value"),
-          },
-          {
-            name: "key4",
-            value: ts.factory.createNumericLiteral("5"),
-          },
-        ]
-      );
+      const newArrayLiteral = astTransformer.createArrayLiteralExpression([
+        {
+          name: "key3",
+          value: ts.factory.createStringLiteral("new-value"),
+        },
+        {
+          name: "key4",
+          value: ts.factory.createNumericLiteral("5"),
+        },
+      ]);
 
       const result = printer.printNode(
         ts.EmitHint.Unspecified,
@@ -236,8 +287,70 @@ describe("TypeScript AST Transformer", () => {
         sourceFile
       );
 
+      expect(result).toEqual(`[{ key3: "new-value" }, { key4: 5 }]`);
+    });
+
+    it("should append elements to an array literal with primitive elements and an anchor element", () => {
+      const updatedSourceFile = astTransformer.addMembersToArrayLiteral(
+        ts.isArrayLiteralExpression,
+        [ts.factory.createIdentifier("4")],
+        true,
+        ts.factory.createIdentifier("3")
+      );
+
+      const result = printer.printFile(updatedSourceFile);
+      expect(result).toEqual(`const myArr = [1, 2, 4, 3];\n`);
+    });
+
+    it("should append elements to an array literal with object elements and an anchor element", () => {
+      FILE_CONTENT = `const myArr = [{ test: 1 }, { anchor: 2 }, { other: "another-anchor" }];`;
+      sourceFile = ts.createSourceFile(
+        FILE_NAME,
+        FILE_CONTENT,
+        ts.ScriptTarget.Latest,
+        true
+      );
+      astTransformer = new TypeScriptASTTransformer(sourceFile);
+
+      const anchor = {
+        name: "anchor",
+        value: ts.factory.createNumericLiteral("2"),
+      };
+      let updatedSourceFile = astTransformer.addMembersToArrayLiteral(
+        ts.isArrayLiteralExpression,
+        [
+          astTransformer.createObjectLiteralExpression([
+            {
+              name: "key3",
+              value: ts.factory.createStringLiteral("new-value"),
+            },
+          ]),
+        ],
+        true,
+        anchor
+      );
+
+      const anotherAnchor = {
+        name: "other",
+        value: ts.factory.createStringLiteral("another-anchor"),
+      };
+      updatedSourceFile = astTransformer.addMembersToArrayLiteral(
+        ts.isArrayLiteralExpression,
+        [
+          astTransformer.createObjectLiteralExpression([
+            {
+              name: "key4",
+              value: ts.factory.createStringLiteral("newer-value"),
+            },
+          ]),
+        ],
+        true,
+        anotherAnchor
+      );
+
+      const result = printer.printFile(updatedSourceFile);
       expect(result).toEqual(
-        `[{ key3: "new-value" }, { key4: 5 }]`
+        `const myArr = [{ test: 1 }, { key3: "new-value" }, { anchor: 2 }, { key4: "newer-value" }, { other: "another-anchor" }];\n`
       );
     });
 
@@ -295,6 +408,13 @@ describe("TypeScript AST Transformer", () => {
         sourceFile
       );
       expect(result).toEqual(`[\n    "new-value",\n    5\n]`);
+    });
+
+    it("should find an element in an array literal by a given condition", () => {
+      const result = astTransformer.findElementInArrayLiteral(
+        (node) => ts.isNumericLiteral(node) && node.text === "2"
+      );
+      expect(result).toBeDefined();
     });
   });
 
@@ -463,7 +583,7 @@ describe("TypeScript AST Transformer", () => {
           expect(astTransformer.importDeclarationCollides(identifier)).toBe(
             true
           );
-          let updatedSourceFile = astTransformer.addImportDeclaration(
+          const updatedSourceFile = astTransformer.addImportDeclaration(
             [identifier],
             "module"
           );

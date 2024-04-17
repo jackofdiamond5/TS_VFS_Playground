@@ -275,7 +275,7 @@ export class TypeScriptASTTransformer {
    * @param elements The elements that will be added to the array literal.
    * @param prepend If the elements should be added at the beginning of the array.
    * @anchorElement The element to anchor the new elements to.
-   * @returns The mutated AST.
+   * @remarks The `anchorElement` must match the type of the elements in the collection.
    */
   public addMembersToArrayLiteral(
     visitCondition: (node: ts.Node) => boolean,
@@ -289,6 +289,7 @@ export class TypeScriptASTTransformer {
    * @param propertyAssignment The elements that will be added to the array literal
    * @prepend If the elements should be added at the beginning of the array.
    * @anchorElement The element to anchor the new elements to.
+   * @remarks The `anchorElement` must match the type of the elements in the collection.
    */
   public addMembersToArrayLiteral(
     visitCondition: (node: ts.Node) => boolean,
@@ -324,6 +325,8 @@ export class TypeScriptASTTransformer {
             if (anchorElement) {
               anchor = Array.from(node.elements).find((e) => {
                 if (ts.isStringLiteral(e) || ts.isNumericLiteral(e)) {
+                  // make sure the entry is a string or numeric literal
+                  // and that its text matches the anchor element's text
                   return (
                     e.text ===
                     (anchorElement as ts.StringLiteral | ts.NumericLiteral).text
@@ -332,11 +335,17 @@ export class TypeScriptASTTransformer {
                   this.isIPropertyAssignment(anchorElement) &&
                   ts.isObjectLiteralExpression(e)
                 ) {
+                  // make sure the entry is a property assignment
+                  // and that its name and value match the anchor element's
                   return e.properties.some(
                     (p) =>
                       ts.isPropertyAssignment(p) &&
-                      ts.isStringLiteral(p.initializer) &&
-                      p.initializer.text === anchorElement.name
+                      p.name.getText() === anchorElement.name &&
+                      ((ts.isStringLiteral(p.initializer) &&
+                        ts.isStringLiteral(anchorElement.value)) ||
+                        (ts.isNumericLiteral(p.initializer) &&
+                          ts.isNumericLiteral(anchorElement.value))) &&
+                      p.initializer.text === anchorElement.value.text
                   );
                 }
                 return false;
@@ -684,7 +693,14 @@ export class TypeScriptASTTransformer {
    * @param target The object to check.
    */
   public isIPropertyAssignment(target: object): target is IPropertyAssignment {
-    return target && "name" in target && "value" in target;
+    return (
+      target &&
+      "name" in target &&
+      "value" in target &&
+      (ts.isExpression(target.value as any) ||
+        ts.isNumericLiteral(target.value as any) ||
+        ts.isStringLiteral(target.value as any))
+    );
   }
 
   /**
