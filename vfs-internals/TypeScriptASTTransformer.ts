@@ -335,7 +335,8 @@ export class TypeScriptASTTransformer {
                   return e.properties.some(
                     (p) =>
                       ts.isPropertyAssignment(p) &&
-                      p.initializer.getText().includes(anchorElement.name)
+                      ts.isStringLiteral(p.initializer) &&
+                      p.initializer.text === anchorElement.name
                   );
                 }
                 return false;
@@ -419,7 +420,9 @@ export class TypeScriptASTTransformer {
 
     const propertyAssignments = (
       elementsOrProperties as IPropertyAssignment[]
-    ).map((property) => this.createObjectLiteralExpression([property], multiline));
+    ).map((property) =>
+      this.createObjectLiteralExpression([property], multiline)
+    );
     return ts.factory.createArrayLiteralExpression(
       propertyAssignments,
       multiline
