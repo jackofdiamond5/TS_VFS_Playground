@@ -112,7 +112,7 @@ export class TypeScriptASTTransformer {
    * @param condition The condition to satisfy.
    * @returns The node's ancenstor that satisfies the condition, `undefined` if none is found.
    */
-  public findNodeAncenstor(
+  public findNodeAncestor(
     node: ts.Node,
     condition: (node: ts.Node) => boolean
   ): ts.Node | undefined {
@@ -121,7 +121,7 @@ export class TypeScriptASTTransformer {
     }
 
     if (node.parent) {
-      return this.findNodeAncenstor(node.parent, condition);
+      return this.findNodeAncestor(node.parent, condition);
     }
 
     // no parent node satisfies the condition

@@ -80,7 +80,7 @@ describe("TypeScript AST Transformer", () => {
       const targetChild = astTransformer
         .findVariableDeclaration("myVar", "string")
         ?.getChildAt(4)!;
-      const variableDeclaration = astTransformer.findNodeAncenstor(
+      const variableDeclaration = astTransformer.findNodeAncestor(
         targetChild,
         ts.isVariableDeclaration
       )!;
@@ -106,6 +106,7 @@ describe("TypeScript AST Transformer", () => {
     });
 
     it("should determine correctly if an entity is an IPropertyAssignment", () => {
+      astTransformer = new TypeScriptASTTransformer(sourceFile);
       const propertyAssignment = {
         name: "test",
         value: ts.factory.createStringLiteral("value"),
