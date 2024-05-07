@@ -5,23 +5,13 @@ import {
   IImport,
   IIdentifier,
 } from "../types";
+import { KeyValuePair } from "../types/KeyValuePair";
 
 export class TypeScriptASTTransformer {
   private _printer: ts.Printer | undefined;
   private _defaultCompilerOptions: ts.CompilerOptions = {
     pretty: true,
   };
-
-  /**
-   * The printer instance to use to print the source file after modifications.
-   */
-  protected get printer(): ts.Printer {
-    if (!this._printer) {
-      this._printer = ts.createPrinter(this.printerOptions);
-    }
-
-    return this._printer;
-  }
 
   /**
    * Create a new source update instance for the given source file.
@@ -31,11 +21,22 @@ export class TypeScriptASTTransformer {
    * @param customCompilerOptions Custom compiler options to use when transforming the source file.
    */
   constructor(
-    protected sourceFile: ts.SourceFile,
-    protected formatter?: IFormattingService,
+    public sourceFile: ts.SourceFile,
+    protected readonly formatter?: IFormattingService,
     protected readonly printerOptions?: ts.PrinterOptions,
     protected readonly customCompilerOptions?: ts.CompilerOptions
   ) {}
+
+  /**
+   * The printer instance to use to print the source file after modifications.
+   */
+  public get printer(): ts.Printer {
+    if (!this._printer) {
+      this._printer = ts.createPrinter(this.printerOptions);
+    }
+
+    return this._printer;
+  }
 
   /**
    * The compiler options to use when transforming the source file.
@@ -51,16 +52,21 @@ export class TypeScriptASTTransformer {
   /**
    * Look up a property assignment in the AST.
    * @param visitCondition The condition by which the property assignment is found.
+   * @param lastMatch Whether to return the last match found. If not set, the first match will be returned.
    */
   public findPropertyAssignment(
-    visitCondition: (node: ts.Node) => boolean
+    visitCondition: (node: ts.Node) => boolean,
+    lastMatch: boolean = false
   ): ts.PropertyAssignment | undefined {
     let propertyAssignment: ts.PropertyAssignment | undefined;
     const visitor: ts.Visitor = (node) => {
       if (ts.isPropertyAssignment(node) && visitCondition(node)) {
         return (propertyAssignment = node);
       }
-      return ts.visitEachChild(node, visitor, undefined);
+      if (!propertyAssignment || lastMatch) {
+        return ts.visitEachChild(node, visitor, undefined);
+      }
+      return undefined;
     };
 
     ts.visitNode(this.sourceFile, visitor, ts.isPropertyAssignment);
@@ -159,7 +165,7 @@ export class TypeScriptASTTransformer {
         propertyValue
       );
     } else {
-      throw new Error("Must provide property value.");
+      throw new Error('Must provide property value.');
     }
 
     const transformer: ts.TransformerFactory<ts.SourceFile> = <
@@ -254,14 +260,29 @@ export class TypeScriptASTTransformer {
   /**
    * Creates a new object literal expression with the given properties.
    * @param properties The properties to add to the object literal.
+   * @param multiline Whether the object literal should be multiline.
+   * @param transform A function to transform the value of the property.
+   * @remarks A `transform` function should be provided if the `properties` are of type `KeyValuePair<T>`.
    */
   public createObjectLiteralExpression(
-    properties: IPropertyAssignment[],
-    multiline: boolean = false
+    properties: IPropertyAssignment[] | KeyValuePair<string>[],
+    multiline: boolean = false,
+    transform?: (value: string) => ts.Expression
   ): ts.ObjectLiteralExpression {
-    const propertyAssignments = properties.map((property) =>
-      ts.factory.createPropertyAssignment(property.name, property.value)
-    );
+    let propertyAssignments: ts.ObjectLiteralElementLike[] = [];
+    if (properties.every(this.isIPropertyAssignment)) {
+      propertyAssignments = properties.map((property) =>
+        ts.factory.createPropertyAssignment(property.name, property.value)
+      );
+    } else {
+      for (const property of properties) {
+        propertyAssignments.push(
+          ...this.mapKeyValuePairToObjectLiteral(property, (value) =>
+            transform ? transform(value) : ts.factory.createStringLiteral(value)
+          )
+        );
+      }
+    }
 
     return ts.factory.createObjectLiteralExpression(
       propertyAssignments,
@@ -695,8 +716,8 @@ export class TypeScriptASTTransformer {
   public isIPropertyAssignment(target: object): target is IPropertyAssignment {
     return (
       target &&
-      "name" in target &&
-      "value" in target &&
+      'name' in target &&
+      'value' in target &&
       (ts.isExpression(target.value as any) ||
         ts.isNumericLiteral(target.value as any) ||
         ts.isStringLiteral(target.value as any))
@@ -766,6 +787,20 @@ export class TypeScriptASTTransformer {
     }
 
     // a module specifier should always be a string literal, so this should never be reached
-    throw new Error("Invalid module specifier.");
+    throw new Error('Invalid module specifier.');
+  }
+
+  /**
+   * Maps a `KeyValuePair` type to a `ts.ObjectLiteralElementLike` type.
+   * @param kvp The key-value pair to map.
+   * @param transform Resolves the `ts.Expression` for the the initializer of the `ts.ObjectLiteralElementLike`.
+   */
+  private mapKeyValuePairToObjectLiteral<T>(
+    kvp: KeyValuePair<T>,
+    transform: (value: T) => ts.Expression
+  ): ts.ObjectLiteralElementLike[] {
+    return Object.entries(kvp).map(([key, value]) =>
+      ts.factory.createPropertyAssignment(key, transform(value))
+    );
   }
 }
