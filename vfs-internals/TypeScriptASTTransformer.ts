@@ -688,7 +688,6 @@ export class TypeScriptASTTransformer {
    */
   public finalize(): string {
     if (this.formatter) {
-      this.formatter.sourceFile = this.sourceFile;
       return this.formatter.applyFormatting();
     }
 

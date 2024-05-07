@@ -1,14 +1,13 @@
 import ts from "typescript";
-import { NEW_LINE_PLACEHOLDER } from "../global-constants";
 import { IFormattingService, IFormatSettings } from "../types";
 import { IFileSystem } from "../types/IFileSystem";
-import { Util } from "./Util";
+import { TypeScriptUtils } from "./Temp";
 
-export class FormattingService implements IFormattingService {
-  private _printer: ts.Printer | undefined;
+export class TypeScriptFormattingService implements IFormattingService {
+  private _sourceFile!: ts.SourceFile;
   private _formatSettingsFromConfig: IFormatSettings = {};
   private _defaultFormatSettings: IFormatSettings = {
-    indentSize: 3,
+    indentSize: 4,
     tabSize: 4,
     newLineCharacter: ts.sys.newLine,
     convertTabsToSpaces: true,
@@ -21,75 +20,48 @@ export class FormattingService implements IFormattingService {
     singleQuotes: true,
   };
 
-  /**
-   * The printer instance to use to get the source code from the AST.
-   */
-  private get printer(): ts.Printer {
-    if (!this._printer) {
-      this._printer = ts.createPrinter(this.printerOptions);
-    }
-
-    return this._printer;
-  }
 
   /**
    * Create a new formatting service for the given source file.
-   * @param sourceFile The source file to format.
-   * @param fileSystem The file system to use when reading formatting options.
+   * @param path Path to the source file to format.
    * @param formatSettings Custom formatting settings to apply.
-   * @param printerOptions Options to use when printing the source file.
    * @param compilerOptions Compiler options to use when transforming the source file.
    */
   constructor(
-    public sourceFile: ts.SourceFile,
-    private readonly fileSystem?: IFileSystem,
+    public path: string,
+    private readonly fileSystem: IFileSystem,
     private readonly formatSettings?: IFormatSettings,
-    private readonly printerOptions?: ts.PrinterOptions,
     private readonly compilerOptions?: ts.CompilerOptions
   ) {}
+
+  private getFileSource(filePath: string): ts.SourceFile {
+    let targetFile = this.fileSystem.readFile(filePath);
+    targetFile = targetFile!.replace(/(\r?\n)(\r?\n)/g, `$1${"//I keep the new line"}$2`);
+    const targetSource = TypeScriptUtils.createSourceFile(filePath, targetFile, ts.ScriptTarget.Latest, true);
+    return targetSource;
+  }
 
   /**
    * Apply formatting to the source file.
    */
   public applyFormatting(): string {
     this.readFormatConfigs();
-    const changes = this.languageService.getFormattingEditsForDocument(
-      this.sourceFile.fileName,
-      this.formatOptions
-    );
-
+    this._sourceFile = this.getFileSource(this.path);
+    
     if (this.formatOptions.singleQuotes) {
-      this.sourceFile = ts.transform(
-        this.sourceFile,
-        [this.convertQuotesTransformer],
-        this.compilerOptions
-      ).transformed[0] as ts.SourceFile;
+      this._sourceFile = ts.transform(this._sourceFile, [this.convertQuotesTransformer], this.compilerOptions).transformed[0];
     }
 
-    const text = this.applyChanges(
-      this.printer.printFile(this.sourceFile),
-      changes
-    );
-    // clean source of new line placeholders
-    return text.replace(
-      new RegExp(
-        `(\r?\n)\\s*?${Util.escapeRegExp(NEW_LINE_PLACEHOLDER)}(\r?\n)`,
-        "g"
-      ),
-      `$1$2`
-    );
+    const changes = this.languageService.getFormattingEditsForDocument(this._sourceFile.fileName, this.formatOptions);
+    const text = this.applyChanges(TypeScriptUtils.getSourceText(this._sourceFile), changes);
+    return text;
   }
 
   /**
    * The format options to use when printing the source file.
    */
   public get formatOptions(): IFormatSettings {
-    return Object.assign(
-      {},
-      this._defaultFormatSettings,
-      this._formatSettingsFromConfig,
-      this.formatSettings
-    );
+    return Object.assign({}, this._defaultFormatSettings, this._formatSettingsFromConfig, this.formatSettings);
   }
 
   /**
@@ -108,10 +80,7 @@ export class FormattingService implements IFormattingService {
    * The language service instance used to format the source file.
    */
   private get languageService(): ts.LanguageService {
-    return ts.createLanguageService(
-      this.languageServiceHost,
-      ts.createDocumentRegistry()
-    );
+    return ts.createLanguageService(this.languageServiceHost, ts.createDocumentRegistry());
   }
 
   /**
@@ -122,18 +91,16 @@ export class FormattingService implements IFormattingService {
   private createLanguageServiceHost(): ts.LanguageServiceHost {
     const servicesHost: ts.LanguageServiceHost = {
       getCompilationSettings: () => ({}),
-      getScriptFileNames: () => [this.sourceFile.fileName],
+      getScriptFileNames: () => [this.path],
       getScriptVersion: (_fileName) => "0",
       getScriptSnapshot: (_fileName) => {
-        return ts.ScriptSnapshot.fromString(
-          this.printer.printFile(this.sourceFile)
-        );
+        return ts.ScriptSnapshot.fromString(TypeScriptUtils.getSourceText(this._sourceFile));
       },
       getCurrentDirectory: () => process.cwd(),
       getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
-      readDirectory: ts.sys.readDirectory,
-      readFile: ts.sys.readFile,
-      fileExists: ts.sys.fileExists,
+      readDirectory: () => [],
+      readFile: () => undefined,
+      fileExists: () => true,
     };
     return servicesHost;
   }
@@ -143,22 +110,14 @@ export class FormattingService implements IFormattingService {
    */
   private convertQuotesTransformer =
     <T extends ts.Node>(context: ts.TransformationContext) =>
-    (rootNode: T): ts.Node => {
+    (rootNode: T): ts.SourceFile => {
       const visit = (node: ts.Node): ts.Node => {
         if (ts.isStringLiteral(node)) {
-          const text = node.text;
-          // the ts.StringLiteral node has a `singleQuote` property that's not part of the public APi for some reason
-          // to make our lives easier we can modify it though
-          const singleQuote = (node as any).singleQuote;
-          const newNode = context.factory.createStringLiteral(text);
-          (newNode as any).singleQuote =
-            singleQuote || this.formatOptions.singleQuotes;
-
-          return newNode;
+          return context.factory.createStringLiteral(node.text, this.formatOptions.singleQuotes);
         }
         return ts.visitEachChild(node, visit, context);
       };
-      return ts.visitNode(rootNode, visit);
+      return ts.visitNode(rootNode, visit, ts.isSourceFile);
     };
 
   /**
@@ -181,8 +140,6 @@ export class FormattingService implements IFormattingService {
    * Try and parse formatting from project `.editorconfig`
    */
   private readFormatConfigs() {
-    if (!this.fileSystem) return;
-
     const editorConfigPath = ".editorconfig";
     if (this.fileSystem.fileExists(editorConfigPath)) {
       // very basic parsing support
@@ -200,16 +157,12 @@ export class FormattingService implements IFormattingService {
           return obj;
         }, {});
 
-      this._formatSettingsFromConfig.convertTabsToSpaces =
-        options["indent_style"] === "space";
+      this._formatSettingsFromConfig.convertTabsToSpaces = options["indent_style"] === "space";
       if (options["indent_size"]) {
-        this._formatSettingsFromConfig.indentSize =
-          parseInt(options["indent_size"], 10) ||
-          this._formatSettingsFromConfig.indentSize;
+        this._formatSettingsFromConfig.indentSize = parseInt(options["indent_size"], 10) || this._formatSettingsFromConfig.indentSize;
       }
       if (options["quote_type"]) {
-        this._formatSettingsFromConfig.singleQuotes =
-          options["quote_type"] === "single";
+        this._formatSettingsFromConfig.singleQuotes = options["quote_type"] === "single";
       }
     }
     // TODO: consider adding eslint support

@@ -1,6 +1,4 @@
-import { SourceFile } from "typescript";
-
 export interface IFormattingService {
-  sourceFile: SourceFile;
+  path: string;
   applyFormatting(): string;
 }
